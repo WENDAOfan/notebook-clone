@@ -1,0 +1,106 @@
+### 1. 创建一个新的笔记本 (POST 请求)
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+
+{
+  "name": "Spring Boot 学习笔记",
+  "description": "这是我的第一个 AI 笔记本项目！"
+}
+
+
+### 2. 查看所有的笔记本 (GET 请求)
+GET http://localhost:8080/api/notebooks
+### 3. 往 ID 为 1 的笔记本中，添加一份超长内容的文档
+POST http://localhost:8080/api/documents
+Content-Type: application/json
+
+{
+  "notebookId": 1,
+  "title": "Spring 核心原理第一章",
+  "content": "这里未来会放几万字的 PDF 解析内容。Spring 框架的核心是 IoC（控制反转）和 AOP（面向切面编程）..."
+}
+
+### 4. 查询 ID 为 1 的笔记本里面，到底存放了哪些文档？
+GET http://localhost:8080/api/documents/notebook/1
+### 5. 模拟网页上传一个 TXT 文件到 ID 为 1 的笔记本
+POST http://localhost:8080/api/documents/upload
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="notebookId"
+
+1
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="我的绝密笔记.txt"
+Content-Type: text/plain
+
+这是我模拟上传的 TXT 文件里的内容！
+以后这里会被替换成几万字的真正文件内容。
+在这条线的上方，就是模拟的“拖拽上传”动作！
+--WebAppBoundary--
+### 6. 重命名笔记本 (PUT 请求)
+# 假设我们要把刚才建的 ID 为 1 的笔记本改名
+PUT http://localhost:8080/api/notebooks/1
+Content-Type: application/json
+
+{
+  "name": "Spring Boot 高级进阶笔记(已改名)",
+  "description": "我已经不是新手了，我要开始学架构了！"
+}
+
+### 7. 撕毁一张没用的资料纸 (DELETE 请求)
+# 假设我们要删掉 ID 为 1 的那篇文档
+DELETE http://localhost:8080/api/documents/1
+
+### 8. 扔掉整个笔记本 (DELETE 请求)
+# 假设我们要把 ID 为 2 的笔记本删掉 (如果没有 ID 为 2 的，你可以先去新建一个再删)
+DELETE http://localhost:8080/api/notebooks/2
+### 9. 连环测试步骤一：新建一个注定要被毁灭的活页夹 (POST)
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+
+{
+  "name": "绝密资料夹 (测试级联删除)",
+  "description": "这个夹子马上就会被连锅端掉！"
+}
+
+### 10. 连环测试步骤二：往刚才新建的夹子(假设返回的 ID 是 3)里面塞一张绝密资料纸 (POST)
+# ⚠️ 注意：把下面 JSON 里的 notebookId 改成步骤一里真实返回的 ID！
+POST http://localhost:8080/api/documents?notebookId=5
+Content-Type: application/json
+
+{
+  
+  "title": "不能说的秘密.txt",
+  "content": "这里面的内容非常危险，夹子销毁时，这段内容也必须消失！"
+}
+
+### 11. 连环测试步骤三：查验一下这篇资料是否真的存进去了 (GET)
+# ⚠️ 注意：把路径最后面的数字换成你的夹子 ID！
+GET http://localhost:8080/api/documents/notebook/5
+
+
+### 12. 连环测试步骤四：🚀 爆破开始！删掉整个活页夹 (DELETE)
+# ⚠️ 注意：把路径最后面的数字换成你的夹子 ID！
+DELETE http://localhost:8080/api/notebooks/5
+
+
+### 13. 连环测试步骤五：废墟检查！再去查一下那个夹子里的资料还在不在？(GET)
+# 如果返回的是一个空的 []，说明级联删除彻底成功！孤儿数据被完美消灭！
+GET http://localhost:8080/api/documents/notebook/5
+### 测试校验：传空名称，应该被拦截
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+
+{
+  "name": "",
+  "description": "测试校验功能"
+}
+### 正常创建笔记本，应该成功
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+
+{
+  "name": "Day9 测试笔记本",
+  "description": "校验功能验证通过！"
+}
