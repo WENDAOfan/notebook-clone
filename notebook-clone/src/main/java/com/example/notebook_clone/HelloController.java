@@ -9,6 +9,6 @@ public class HelloController {
     // @GetMapping 规定了访问路径，当浏览器访问 /hello 时，就会执行下面的方法
     @GetMapping("/hello")
     public String sayHello() {
-        return "你好，DevMind！我的第一个 Spring Boot AI 后端跑起来了！";
+        return "你好，NotebookLM Clone！我的第一个 Spring Boot AI 后端跑起来了！";
     }
 }

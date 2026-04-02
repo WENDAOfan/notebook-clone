@@ -1,7 +1,6 @@
-//这是一个 Repository（仓库/数据访问层），你可以把它理解为一个 "数据库管家"——所有对 notebook 表的
-// 增删改查操作都通过它来完成。
 package com.example.notebook_clone.repository;
-
+//这是一个 Repository（仓库/数据访问层），你可以把它理解为一个 "数据库管家"
+// ——所有对 notebook 表的增删改查操作都通过它来完成。
 import com.example.notebook_clone.entity.Notebook;
 import org.springframework.data.jpa.repository.JpaRepository;
 

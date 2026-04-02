@@ -15,7 +15,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 import jakarta.validation.Valid;
-
+import com.example.notebook_clone.common.Result;
 @RestController
 @RequestMapping("/api/documents") 
 public class DocumentController {
@@ -30,28 +30,25 @@ public class DocumentController {
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
     @PostMapping
-    // public Document createDocument(@RequestBody Document document) {
-    //     document.setCreateTime(LocalDateTime.now());
-    //     return documentRepository.save(document);
-    // }
+    
     // 改成：先查 Notebook，再关联
-    public Document createDocument(@Valid @RequestBody Document document, @RequestParam Long notebookId) {
+    public Result<Document> createDocument(@Valid @RequestBody Document document, @RequestParam Long notebookId) {
         Notebook notebook = notebookRepository.findById(notebookId).orElseThrow(() -> new RuntimeException("笔记本不存在！"));
         document.setNotebook(notebook);
         notebook.getDocuments().add(document); // 同步双向关联
         document.setCreateTime(LocalDateTime.now());
-    return documentRepository.save(document);
+    return Result.success(documentRepository.save(document));
 }
     // 接口 2：查看某个特定笔记本下的所有文档 (GET 请求)
     // 路径会变成类似 /api/documents/notebook/1 (查询 ID 为 1 的笔记本下的文档)
     @GetMapping("/notebook/{notebookId}")
-    public List<Document> getDocumentsByNotebook(@PathVariable Long notebookId) {
+    public Result<List<Document>> getDocumentsByNotebook(@PathVariable Long notebookId) {
         // 调用我们刚才在 Repository 里写的魔法方法！
-        return documentRepository.findByNotebook_Id(notebookId);
+        return Result.success(documentRepository.findByNotebook_Id(notebookId));
     }
     // 接口 3：上传文件并自动提取文字 (POST 请求)
     @PostMapping("/upload")
-    public Document uploadDocumentFile(
+    public Result<Document> uploadDocumentFile(
             @RequestParam("notebookId") Long notebookId, // 接收活页夹 ID
             @RequestParam("file") MultipartFile file     // 接收上传的文件
     ) {
@@ -74,7 +71,7 @@ public class DocumentController {
             document.setContent(extractedText); // 把提取出来的几万字塞进去
             document.setCreateTime(LocalDateTime.now());
 
-            return documentRepository.save(document);
+            return Result.success(documentRepository.save(document));
 
         } catch (IOException e) {
             // 如果读取文件失败，程序不能崩溃，要抛出异常报错
@@ -84,8 +81,8 @@ public class DocumentController {
     // 接口 4：撕毁某一张特定的资料纸 (DELETE 请求)
     // 路径例如：/api/documents/1 (代表删除 ID 为 1 的文档)
     @DeleteMapping("/{id}")
-    public String deleteDocument(@PathVariable Long id) {
+    public Result<Void> deleteDocument(@PathVariable Long id) {
         documentRepository.deleteById(id);
-        return "成功！这篇文档已经被彻底销毁。";
+        return Result.success(null);
     }
 }

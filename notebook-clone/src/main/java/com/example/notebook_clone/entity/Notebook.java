@@ -35,20 +35,4 @@ public class Notebook {
     @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true, mappedBy = "notebook")
     private List<Document> documents = new java.util.ArrayList<>();
 
-    // --- 下面是标准的 Getter 和 Setter 方法，用于读取和修改属性 ---
-    // (在企业开发中通常会用 Lombok 插件来省略这些代码，但今天我们手写最底层的逻辑)
-    //3.31,已使用Lombok
-    // public Long getId() { return id; }
-    // public void setId(Long id) { this.id = id; }
-
-    // public String getName() { return name; }
-    // public void setName(String name) { this.name = name; }
-
-    // public String getDescription() { return description; }
-    // public void setDescription(String description) { this.description = description; }
-
-    // public LocalDateTime getCreateTime() { return createTime; }
-    // public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
-    // public List<Document> getDocuments() { return documents; }
-    // public void setDocuments(List<Document> documents) { this.documents = documents; }
-}
+    }

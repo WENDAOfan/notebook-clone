@@ -2,6 +2,9 @@ package com.example.notebook_clone.entity;
 
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import lombok.Data;
 import jakarta.validation.constraints.NotBlank;
 
@@ -18,6 +21,7 @@ public class Document {
     // 第 13-14 行，把被注释的 notebookId 替换成：
     @ManyToOne
     @JoinColumn(name = "notebook_id")
+    @JsonIgnore  // ← 添加这行：序列化时不输出 notebook 字段，避免死循环
     private Notebook notebook;
     // 资料的标题（比如：Spring教程.pdf）
     @NotBlank(message = "文档标题不能为空")
@@ -30,21 +34,4 @@ public class Document {
 
     private LocalDateTime createTime;
 
-    // --- 下面是标准的 Getter 和 Setter 方法 ---
-    //只注释不删除是为了记录过程
-    // public Long getId() { return id; }
-    // public void setId(Long id) { this.id = id; }
-
-    // // public Long getNotebookId() { return notebookId; }
-    // // public void setNotebookId(Long notebookId) { this.notebookId = notebookId; }
-    // public Notebook getNotebook() { return notebook; }
-    // public void setNotebook(Notebook notebook) { this.notebook = notebook; }
-    // public String getTitle() { return title; }
-    // public void setTitle(String title) { this.title = title; }
-
-    // public String getContent() { return content; }
-    // public void setContent(String content) { this.content = content; }
-
-    // public LocalDateTime getCreateTime() { return createTime; }
-    // public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
 }
