@@ -8,6 +8,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 import jakarta.validation.Valid;
 import com.example.notebook_clone.common.Result;//返回值统一Result<T>
+import com.example.notebook_clone.entity.User;           // ← 新增
+import com.example.notebook_clone.repository.UserRepository; // ← 新增
+
 // @Valid 的意思就是："在把请求体转成 Java 对象时，
 // 顺便检查一下字段上的校验注解"。如果校验不通过，Spring 会自动拦截并返回错误。
 @RestController
@@ -16,9 +19,11 @@ public class NotebookController {
 
     // 把刚才建的“管家”请过来（依赖注入）
     private final NotebookRepository notebookRepository;
+    private final UserRepository userRepository;  // ← 新增
 
-    public NotebookController(NotebookRepository notebookRepository) {
+    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository) {
         this.notebookRepository = notebookRepository;
+        this.userRepository = userRepository; 
     }
 
     // 接口 1：查看所有笔记本 (GET 请求)
@@ -31,11 +36,33 @@ public class NotebookController {
     // 接口 2：创建一个新笔记本 (POST 请求)
     @PostMapping
     public Result<Notebook> createNotebook(@Valid @RequestBody Notebook notebook) {
-        // 设置一下当前的创建时间
+
+        // 🔍 调试日志：打印收到的请求内容
+        System.out.println("=== 收到的笔记本数据 ===");
+        System.out.println("name: " + notebook.getName());
+        System.out.println("user: " + notebook.getUser());
+        if (notebook.getUser() != null) {
+            System.out.println("user.id: " + notebook.getUser().getId());
+        }
+
+        // ===== 核心：处理 User 关联 =====
+        if (notebook.getUser() != null && notebook.getUser().getId() != null) {
+            System.out.println("→ 正在查找真实 User 对象...");
+            User realUser = userRepository.findById(notebook.getUser().getId())
+                    .orElseThrow(() -> new RuntimeException("用户不存在，ID: " + notebook.getUser().getId()));
+
+            System.out.println("→ 找到真实User: " + realUser.getUsername());
+            // 把"假 User"替换成"真 User"
+            notebook.setUser(realUser);
+            System.out.println("→ 已替换为真实User对象");
+        } else {
+            System.out.println("⚠️ 请求中没有 user 信息或 user.id 为空！");
+        }
+
         notebook.setCreateTime(LocalDateTime.now());
-        // 调用管家的 save() 方法保存到数据库
         return Result.success(notebookRepository.save(notebook));
     }
+
     // 接口 3：修改笔记本的名称或描述 (PUT 请求，专门用于修改)
     // 路径例如：/api/notebooks/1 (代表修改 ID 为 1 的笔记本)
     @PutMapping("/{id}")

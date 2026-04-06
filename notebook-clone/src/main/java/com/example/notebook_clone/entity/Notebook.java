@@ -5,6 +5,8 @@ import java.time.LocalDateTime;
 import lombok.Data;  // ← 在文件顶部加这个 import
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty.Access;
 
 
 // @Entity 告诉 JPA：这是一个要映射到数据库里的表
@@ -34,5 +36,12 @@ public class Notebook {
     // 表示：如果活页夹没了，里面的资料纸就成了孤儿，直接从数据库里抹除
     @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true, mappedBy = "notebook")
     private List<Document> documents = new java.util.ArrayList<>();
-
-    }
+    // ===== 多对一关系：笔记本属于某个用户 =====
+    // @ManyToOne 表示：多个笔记本可以属于同一个用户
+    // @JoinColumn(name = "user_id") → 在 notebooks 表创建 user_id 外键列
+    // @JsonIgnore → 避免 JSON 序列化时出现 User ↔ Notebook 无限循环
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    @JsonProperty(access = Access.WRITE_ONLY)
+    private User user;
+}

@@ -87,4 +87,102 @@ notebook-clone/src/main/java/.../
 ```
 
 ---
+## 📚 Day 10 知识要点总结
 
+### 1. 代码清理 — 消除技术债务
+
+**核心原则**：
+- 注释掉的废代码就是"技术债务"，该删就删
+- **Git 已经记录了一切**，不需要靠注释保留旧代码
+- 找回历史代码：`git show 提交ID:文件路径` 或 IDE 的 Local History
+
+---
+
+### 2. Lombok @Data 全面使用
+
+**@Data = @Getter + @Setter + @ToString + @EqualsAndHashCode**
+
+| 方式 | 代码量 | 维护成本 | 推荐 |
+|------|-------|---------|------|
+| 手写 getter/setter | 多 | 高（每加字段要写2个方法）| ❌ |
+| @Data 自动生成 | 无 | 低（编译时自动生成）| ✅ |
+
+---
+
+### 3. 解决 JSON 无限递归 — @JsonIgnore
+
+**问题根源**：JPA 双向关联 + Jackson 序列化的经典冲突
+```
+Notebook → documents → Document → notebook → Notebook → ...（死循环）
+```
+
+**解决方案**：在"多"的一方（Document）加 `@JsonIgnore`
+```java
+@ManyToOne
+@JoinColumn(name = "notebook_id")
+@JsonIgnore  // 打断循环，序列化时忽略此字段
+private Notebook notebook;
+```
+
+---
+
+### 4. Controller 返回值统一 — Result<T>
+
+**统一返回格式的重要性**：
+- 前后端协作的基石
+- 前端只需要一套解析逻辑
+
+**Result<T> 结构**：
+```json
+{
+  "code": 200,           // 业务状态码
+  "message": "操作成功",  // 提示信息
+  "data": { ... }        // 实际数据（泛型）
+}
+```
+
+**使用方式**：
+| 场景 | 写法 |
+|------|------|
+| 成功有数据 | `Result.success(data)` |
+| 成功无数据 | `Result.success(null)` → `Result<Void>` |
+| 失败 | `Result.fail("错误信息")` |
+
+---
+
+### 5. 代码规范细节
+
+| 规范 | 说明 |
+|------|------|
+| package 语句位置 | 必须是文件第一个非注释行 |
+| 项目名一致性 | HelloController 文案要与项目名保持一致 |
+| 删除旧注释 | DocumentController 中注释掉的旧代码要清理 |
+
+---
+
+### 6. Git 提交规范
+
+**提交信息格式**：
+```
+refactor: Day10 代码清理 — 统一 Result 返回格式、清理废代码、修复 JSON 循环引用
+```
+
+**类型说明**：
+- `refactor`：重构（不改变功能，只改代码结构）
+- `feat`：新功能
+- `fix`：修复 bug
+
+**版本标签**：`v0.1.0` 代表第一阶段里程碑
+
+---
+
+## 🎯 核心收获
+
+| 能力 | 说明 |
+|------|------|
+| 代码洁癖 | 废代码及时清理，保持代码整洁 |
+| 统一意识 | 项目风格要统一，不要混用不同写法 |
+| 工程思维 | 从"能跑就行"进化到"可维护的代码" |
+| 防御性编程 | @JsonIgnore 预防潜在问题 |
+
+**Day 10 的本质**：不写新功能，专注让代码从"练手级别"变成"企业级别"。

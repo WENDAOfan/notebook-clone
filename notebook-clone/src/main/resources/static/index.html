@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Notebook Clone</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- 顶部导航栏 -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">📓</span>
+                <h1>Notebook Clone</h1>
+            </div>
+            <button class="btn btn-primary" onclick="showCreateNotebookModal()">
+                <span>+</span> 新建笔记本
+            </button>
+        </header>
+
+        <!-- 主内容区 -->
+        <div class="main-container">
+            <!-- 左侧边栏：笔记本列表 -->
+            <aside class="sidebar">
+                <h2 class="sidebar-title">📁 笔记本</h2>
+                <div id="notebookList" class="notebook-list">
+                    <!-- 笔记本列表将通过 JS 动态生成 -->
+                    <div class="loading">加载中...</div>
+                </div>
+                <div class="sidebar-actions">
+                    <button class="btn btn-secondary" onclick="showRenameNotebookModal()" id="btnRename" disabled>
+                        重命名
+                    </button>
+                    <button class="btn btn-danger" onclick="deleteCurrentNotebook()" id="btnDeleteNotebook" disabled>
+                        删除笔记本
+                    </button>
+                </div>
+            </aside>
+
+            <!-- 右侧内容区：文档列表 -->
+            <main class="content">
+                <div class="content-header">
+                    <h2 id="currentNotebookName" class="content-title">📄 文档列表</h2>
+                    <div class="content-actions" id="contentActions" style="display: none;">
+                        <button class="btn btn-primary" onclick="showCreateDocumentModal()">
+                            <span>+</span> 新建文档
+                        </button>
+                        <button class="btn btn-secondary" onclick="triggerFileUpload()">
+                            <span>📤</span> 上传TXT文件
+                        </button>
+                        <input type="file" id="fileInput" accept=".txt" style="display: none;" onchange="handleFileUpload(event)">
+                    </div>
+                </div>
+                
+                <div id="documentList" class="document-list">
+                    <!-- 文档列表将通过 JS 动态生成 -->
+                    <div class="empty-state">
+                        <p>请先在左侧选择一个笔记本</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- 新建笔记本弹窗 -->
+    <div id="createNotebookModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>新建笔记本</h3>
+                <button class="close-btn" onclick="closeModal('createNotebookModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="notebookName">名称 <span class="required">*</span></label>
+                    <input type="text" id="notebookName" placeholder="请输入笔记本名称" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label for="notebookDescription">描述</label>
+                    <textarea id="notebookDescription" placeholder="请输入描述（可选）" maxlength="500" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('createNotebookModal')">取消</button>
+                <button class="btn btn-primary" onclick="createNotebook()">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重命名笔记本弹窗 -->
+    <div id="renameNotebookModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>重命名笔记本</h3>
+                <button class="close-btn" onclick="closeModal('renameNotebookModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="renameNotebookName">名称 <span class="required">*</span></label>
+                    <input type="text" id="renameNotebookName" placeholder="请输入新名称" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label for="renameNotebookDescription">描述</label>
+                    <textarea id="renameNotebookDescription" placeholder="请输入描述（可选）" maxlength="500" rows="3"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('renameNotebookModal')">取消</button>
+                <button class="btn btn-primary" onclick="renameNotebook()">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 新建文档弹窗 -->
+    <div id="createDocumentModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3>新建文档</h3>
+                <button class="close-btn" onclick="closeModal('createDocumentModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="documentTitle">标题 <span class="required">*</span></label>
+                    <input type="text" id="documentTitle" placeholder="请输入文档标题">
+                </div>
+                <div class="form-group">
+                    <label for="documentContent">内容</label>
+                    <textarea id="documentContent" placeholder="请输入文档内容..." rows="10"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('createDocumentModal')">取消</button>
+                <button class="btn btn-primary" onclick="createDocument()">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 查看文档内容弹窗 -->
+    <div id="viewDocumentModal" class="modal">
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3 id="viewDocumentTitle">文档内容</h3>
+                <button class="close-btn" onclick="closeModal('viewDocumentModal')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <pre id="viewDocumentContent" class="document-content"></pre>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal('viewDocumentModal')">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 提示 -->
+    <div id="toast" class="toast"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>

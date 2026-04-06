@@ -104,3 +104,123 @@ Content-Type: application/json
   "name": "Day9 测试笔记本",
   "description": "校验功能验证通过！"
 }
+### ========== Day 11 用户系统测试 ==========
+
+### Day11-1. 创建第一个测试用户 (POST)
+POST http://localhost:8080/api/users
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "123456",
+  "email": "test@example.com"
+}
+
+### Day11-2. 查看所有用户列表 (GET)
+GET http://localhost:8080/api/users
+
+### Day11-3. 查看刚创建的用户详情 (GET)
+GET http://localhost:8080/api/users/3
+
+### Day11-4. 测试重复注册（应该失败）
+POST http://localhost:8080/api/users
+Content-Type: application/json
+
+{
+  "username": "testuser",
+  "password": "654321"
+}
+
+### Day11-5. 创建一个属于该用户的笔记本 (POST)
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+
+{
+  "name": "我的第1个笔记本",
+  "description": "这个笔记本属于 testuser 用户",
+  "user": {
+    "id": 3
+  }
+}
+
+### Day11-6. 查看用户详情，验证是否包含笔记本列表 (GET)
+GET http://localhost:8080/api/users/3
+
+### Day11-7. 查看所有笔记本，验证是否有外键关联 (GET)
+GET http://localhost:8080/api/notebooks
+
+### Day11-8. 删除测试用户（级联删除他的笔记本）(DELETE)
+DELETE http://localhost:8080/api/users/1
+### ========== Day 12 认证系统测试（Spring Security + BCrypt）==========
+
+### Day12-1. 用户注册（密码会被 BCrypt 加密存储）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+### Day12-2. 再次注册同一用户（应该失败，用户名已存在）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+### Day12-3. 用户登录（正确密码）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+### Day12-4. 用户登录（错误密码，应该失败）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "wrongpassword"
+}
+
+### Day12-5. 用户登录（不存在的用户，应该失败）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "notexistuser",
+  "password": "123456"
+}
+
+### Day12-6. 注册另一个用户（用于后续测试）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "lisi",
+  "password": "abcdef"
+}
+
+### Day12-7. 测试参数校验（用户名为空）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "",
+  "password": "123456"
+}
+
+### Day12-8. 测试参数校验（密码为空）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "wangwu",
+  "password": ""
+}
