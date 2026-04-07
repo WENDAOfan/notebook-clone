@@ -2,16 +2,71 @@
 let notebooks = [];
 let currentNotebookId = null;
 let currentDocuments = [];
+let currentUser = null;
+
+// ==================== 初始化 ====================
+document.addEventListener('DOMContentLoaded', () => {
+    checkLoginStatus();
+});
+
+// ==================== 登录状态管理 ====================
+function checkLoginStatus() {
+    // 从 localStorage 读取用户信息
+    const savedUser = localStorage.getItem('currentUser');
+    if (savedUser) {
+        currentUser = JSON.parse(savedUser);
+        showMainApp();
+    } else {
+        showAuthPage();
+    }
+}
+
+function showAuthPage() {
+    document.getElementById('authPage').style.display = 'flex';
+    document.getElementById('mainApp').style.display = 'none';
+}
+
+function showMainApp() {
+    document.getElementById('authPage').style.display = 'none';
+    document.getElementById('mainApp').style.display = 'flex';
+    document.getElementById('currentUsername').textContent = currentUser?.username || '用户';
+    loadNotebooks();
+}
+
+function showRegister() {
+    document.getElementById('loginForm').style.display = 'none';
+    document.getElementById('registerForm').style.display = 'block';
+    // 清空表单
+    document.getElementById('registerUsername').value = '';
+    document.getElementById('registerPassword').value = '';
+    document.getElementById('registerConfirmPassword').value = '';
+}
+
+function showLogin() {
+    document.getElementById('registerForm').style.display = 'none';
+    document.getElementById('loginForm').style.display = 'block';
+    // 清空表单
+    document.getElementById('loginUsername').value = '';
+    document.getElementById('loginPassword').value = '';
+}
 
 // ==================== API 封装 ====================
 const API_BASE = '';
 
 async function fetchAPI(url, options = {}) {
     try {
+        const defaultHeaders = {
+            'Content-Type': 'application/json',
+        };
+        
+        // TODO: Day 13 JWT 改造后，在这里添加 Token
+        // const token = localStorage.getItem('token');
+        // if (token) {
+        //     defaultHeaders['Authorization'] = 'Bearer ' + token;
+        // }
+        
         const response = await fetch(`${API_BASE}${url}`, {
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            headers: defaultHeaders,
             ...options,
         });
         
@@ -31,6 +86,107 @@ async function fetchAPI(url, options = {}) {
         throw error;
     }
 }
+
+// ==================== 认证相关 API ====================
+async function loginAPI(username, password) {
+    return fetchAPI('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+    });
+}
+
+async function registerAPI(username, password) {
+    return fetchAPI('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ username, password }),
+    });
+}
+
+// ==================== 登录/注册处理 ====================
+async function login() {
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    
+    if (!username || !password) {
+        showToast('请输入用户名和密码', 'error');
+        return;
+    }
+    
+    try {
+        const user = await loginAPI(username, password);
+        currentUser = user;
+        
+        // 保存用户信息到 localStorage
+        localStorage.setItem('currentUser', JSON.stringify(user));
+        
+        // TODO: Day 13 JWT 改造后，保存 Token
+        // localStorage.setItem('token', token);
+        
+        showToast('登录成功', 'success');
+        showMainApp();
+    } catch (error) {
+        showToast('登录失败: ' + error.message, 'error');
+    }
+}
+
+async function register() {
+    const username = document.getElementById('registerUsername').value.trim();
+    const password = document.getElementById('registerPassword').value;
+    const confirmPassword = document.getElementById('registerConfirmPassword').value;
+    
+    if (!username || !password) {
+        showToast('请输入用户名和密码', 'error');
+        return;
+    }
+    
+    if (password.length < 6) {
+        showToast('密码至少需要6位', 'error');
+        return;
+    }
+    
+    if (password !== confirmPassword) {
+        showToast('两次输入的密码不一致', 'error');
+        return;
+    }
+    
+    try {
+        await registerAPI(username, password);
+        showToast('注册成功，请登录', 'success');
+        showLogin();
+    } catch (error) {
+        showToast('注册失败: ' + error.message, 'error');
+    }
+}
+
+function logout() {
+    // 清除登录状态
+    currentUser = null;
+    currentNotebookId = null;
+    currentDocuments = [];
+    notebooks = [];
+    
+    localStorage.removeItem('currentUser');
+    // TODO: Day 13 JWT 改造后，清除 Token
+    // localStorage.removeItem('token');
+    
+    showToast('已退出登录', 'info');
+    showAuthPage();
+}
+
+// 回车键登录/注册
+document.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') {
+        const authPage = document.getElementById('authPage');
+        if (authPage.style.display !== 'none') {
+            const loginForm = document.getElementById('loginForm');
+            if (loginForm.style.display !== 'none') {
+                login();
+            } else {
+                register();
+            }
+        }
+    }
+});
 
 // ==================== 笔记本相关 API ====================
 async function getAllNotebooks() {
@@ -78,10 +234,17 @@ async function deleteDocumentAPI(id) {
 async function uploadDocumentFileAPI(file, notebookId) {
     const formData = new FormData();
     formData.append('file', file);
-    formData.append('notebookId', notebookId);
+    
+    const headers = {};
+    // TODO: Day 13 JWT 改造后，在这里添加 Token
+    // const token = localStorage.getItem('token');
+    // if (token) {
+    //     headers['Authorization'] = 'Bearer ' + token;
+    // }
     
     const response = await fetch(`${API_BASE}/api/documents/upload?notebookId=${notebookId}`, {
         method: 'POST',
+        headers: headers,
         body: formData,
     });
     
@@ -233,7 +396,6 @@ async function renameNotebook() {
         closeModal('renameNotebookModal');
         showToast('笔记本修改成功', 'success');
         await loadNotebooks();
-        // 更新当前显示的标题
         const currentNotebook = notebooks.find(n => n.id === currentNotebookId);
         if (currentNotebook) {
             document.getElementById('currentNotebookName').textContent = `📄 ${escapeHtml(name)} - 文档列表`;
@@ -326,7 +488,7 @@ async function handleFileUpload(event) {
         showToast('正在上传...', 'info');
         await uploadDocumentFileAPI(file, currentNotebookId);
         showToast('文件上传成功', 'success');
-        event.target.value = ''; // 清空选择
+        event.target.value = '';
         currentDocuments = await getDocumentsByNotebook(currentNotebookId);
         renderDocumentList();
     } catch (error) {
@@ -409,8 +571,3 @@ function formatFileSize(size) {
     if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
     return (size / (1024 * 1024)).toFixed(1) + ' MB';
 }
-
-// ==================== 初始化 ====================
-document.addEventListener('DOMContentLoaded', () => {
-    loadNotebooks();
-});

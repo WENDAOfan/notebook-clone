@@ -7,25 +7,80 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <div class="app">
+    <!-- 登录/注册页面 -->
+    <div id="authPage" class="auth-page">
+        <div class="auth-container">
+            <div class="auth-header">
+                <span class="logo-icon">📓</span>
+                <h1>Notebook Clone</h1>
+                <p>你的个人知识库</p>
+            </div>
+            
+            <!-- 登录表单 -->
+            <div id="loginForm" class="auth-form">
+                <h2>登录</h2>
+                <div class="form-group">
+                    <label for="loginUsername">用户名</label>
+                    <input type="text" id="loginUsername" placeholder="请输入用户名">
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">密码</label>
+                    <input type="password" id="loginPassword" placeholder="请输入密码">
+                </div>
+                <button class="btn btn-primary btn-block" onclick="login()">登录</button>
+                <p class="auth-switch">
+                    还没有账号？<a href="javascript:void(0)" onclick="showRegister()">立即注册</a>
+                </p>
+            </div>
+            
+            <!-- 注册表单 -->
+            <div id="registerForm" class="auth-form" style="display: none;">
+                <h2>注册</h2>
+                <div class="form-group">
+                    <label for="registerUsername">用户名</label>
+                    <input type="text" id="registerUsername" placeholder="请输入用户名">
+                </div>
+                <div class="form-group">
+                    <label for="registerPassword">密码</label>
+                    <input type="password" id="registerPassword" placeholder="请输入密码（至少6位）">
+                </div>
+                <div class="form-group">
+                    <label for="registerConfirmPassword">确认密码</label>
+                    <input type="password" id="registerConfirmPassword" placeholder="请再次输入密码">
+                </div>
+                <button class="btn btn-primary btn-block" onclick="register()">注册</button>
+                <p class="auth-switch">
+                    已有账号？<a href="javascript:void(0)" onclick="showLogin()">立即登录</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主应用页面（登录后显示） -->
+    <div id="mainApp" class="app" style="display: none;">
         <!-- 顶部导航栏 -->
         <header class="header">
             <div class="logo">
                 <span class="logo-icon">📓</span>
                 <h1>Notebook Clone</h1>
             </div>
-            <button class="btn btn-primary" onclick="showCreateNotebookModal()">
-                <span>+</span> 新建笔记本
-            </button>
+            <div class="header-actions">
+                <button class="btn btn-primary" onclick="showCreateNotebookModal()">
+                    <span>+</span> 新建笔记本
+                </button>
+                <div class="user-menu">
+                    <span class="user-name" id="currentUsername">用户</span>
+                    <button class="btn btn-secondary btn-small" onclick="logout()">退出</button>
+                </div>
+            </div>
         </header>
 
         <!-- 主内容区 -->
         <div class="main-container">
             <!-- 左侧边栏：笔记本列表 -->
             <aside class="sidebar">
-                <h2 class="sidebar-title">📁 笔记本</h2>
+                <h2 class="sidebar-title">📁 我的笔记本</h2>
                 <div id="notebookList" class="notebook-list">
-                    <!-- 笔记本列表将通过 JS 动态生成 -->
                     <div class="loading">加载中...</div>
                 </div>
                 <div class="sidebar-actions">
@@ -54,7 +109,6 @@
                 </div>
                 
                 <div id="documentList" class="document-list">
-                    <!-- 文档列表将通过 JS 动态生成 -->
                     <div class="empty-state">
                         <p>请先在左侧选择一个笔记本</p>
                     </div>

@@ -158,7 +158,7 @@ POST http://localhost:8080/api/auth/register
 Content-Type: application/json
 
 {
-  "username": "zhangsan",
+  "username": "wangsi",
   "password": "123456"
 }
 
@@ -224,3 +224,30 @@ Content-Type: application/json
   "username": "wangwu",
   "password": ""
 }
+
+### ========== Day 13 JWT 无状态认证测试 ==========
+
+### Day13-1. 用户登录（获取 JWT Token）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "wangsi",
+  "password": "123456"
+}
+
+### Day13-2. 获取当前登录用户信息（携带 Token）
+### ⚠️ 注意：把 Bearer 后面的 token 换成 Day13-1 返回的真实 token！
+GET http://localhost:8080/api/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjgsInVzZXJuYW1lIjoid2FuZ3NpIiwic3ViIjoid2FuZ3NpIiwiaWF0IjoxNzc1NTY2NzE2LCJleHAiOjE3NzU2NTMxMTZ9.b2o1l4D23YcmWoQFN073KxUiHB5IfC90Aa3cJZy5ips
+
+### Day13-3. 测试无效 Token（应该失败）
+GET http://localhost:8080/api/auth/me
+Authorization: Bearer invalid.token.here
+
+### Day13-4. 测试不带 Token（应该失败）
+GET http://localhost:8080/api/auth/me
+
+### Day13-5. 使用错误格式的 Authorization 头部（应该失败）
+GET http://localhost:8080/api/auth/me
+Authorization: Basic wangsi:123456

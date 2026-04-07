@@ -40,6 +40,8 @@ notebook-clone/
 │   │   └── User.java                    ← 用户实体
 │   ├── config/                          ← 【配置层】Spring 配置
 │   │   └── SecurityConfig.java          ← 安全配置（密码加密、权限）
+│   ├── util/                            ← 【工具层】工具类
+│   │   └── JwtUtil.java                 ← JWT Token 生成/校验工具
 │   └── common/                          ← 【公共层】通用工具
 │       ├── GlobalExceptionHandler.java  ← 全局异常处理
 │       └── Result.java                  ← 统一返回结果包装
@@ -599,6 +601,81 @@ public class SecurityConfig {
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();     // BCrypt 加密器
     }
+```
+
+**知识点**：
+- `@Configuration`：标记配置类
+- `@Bean`：将方法返回值注册为 Spring 管理的对象
+- `PasswordEncoder`：密码加密接口
+
+---
+
+#### `JwtUtil.java` - JWT Token 工具类
+
+```java
+@Component                                      // ← Spring 管理的组件
+public class JwtUtil {
+
+    @Value("${jwt.secret}")                     // ← 从配置文件读取密钥
+    private String secret;
+
+    @Value("${jwt.expiration}")                 // ← 从配置文件读取过期时间
+    private Long expiration;
+
+    /**
+     * 生成 JWT Token
+     */
+    public String generateToken(Long userId, String username) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + expiration);
+
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userId", userId);
+        claims.put("username", username);
+
+        return Jwts.builder()
+                .claims(claims)              // 自定义数据（Payload）
+                .subject(username)           // 主题
+                .issuedAt(now)               // 签发时间
+                .expiration(expiryDate)      // 过期时间
+                .signWith(getSigningKey())   // 签名
+                .compact();                  // 生成字符串
+    }
+
+    /**
+     * 从 Token 中提取用户ID
+     */
+    public Long getUserIdFromToken(String token) {
+        Claims claims = parseToken(token);
+        return claims.get("userId", Long.class);
+    }
+
+    /**
+     * 验证 Token 是否有效
+     */
+    public boolean validateToken(String token) {
+        try {
+            parseToken(token);
+            return true;
+        } catch (ExpiredJwtException e) {
+            System.out.println("Token 已过期");
+        } catch (SecurityException e) {
+            System.out.println("Token 签名验证失败");
+        }
+        return false;
+    }
+
+    /**
+     * 解析 Token
+     */
+    public Claims parseToken(String token) {
+        return Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+    }
+}
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -669,6 +746,196 @@ public UserController(UserRepository userRepository) {
 | 删除 | 写 DELETE SQL | `repository.deleteById(id)` |
 
 **Spring Data JPA**：在 JPA 基础上进一步封装，连实现类都不用写了！
+
+---
+
+### 认证流程详解（Session vs JWT）
+
+#### 传统 Session 认证（有状态）
+
+```
+┌─────────┐      登录      ┌─────────┐      创建      ┌─────────┐
+│  浏览器  │ ───────────→  │  服务端  │ ───────────→  │ Session │
+│         │  username/    │  验证密码 │               │ 存储用户 │
+│         │  password     │  创建会话 │               │ 信息    │
+│         │ ←───────────  │  返回     │               │         │
+│  存     │   Set-Cookie: │  SessionID│               │         │
+│ Cookie  │   sessionId=xxx│         │               │         │
+└─────────┘               └─────────┘               └─────────┘
+        │
+        │ 后续请求自动携带 Cookie
+        ↓
+┌─────────┐      请求      ┌─────────┐      查询      ┌─────────┐
+│ Cookie: │ ───────────→  │  服务端  │ ───────────→  │ Session │
+│sessionId│               │  提取    │               │ 获取用户 │
+│ =xxx    │ ←───────────  │  sessionId│              │ 信息    │
+│         │    返回数据    │  查 Session│             │         │
+└─────────┘               └─────────┘               └─────────┘
+```
+
+**Session 的缺点**：
+- 服务端需要存储 Session 数据（内存/Redis）
+- 分布式环境下 Session 共享麻烦
+- 每次请求都要查 Session，性能开销
+
+---
+
+#### JWT 无状态认证（推荐）
+
+```
+┌─────────┐      登录      ┌─────────┐      生成      ┌─────────┐
+│  浏览器  │ ───────────→  │  服务端  │ ───────────→  │  JWT    │
+│         │  username/    │  验证密码 │               │ Token   │
+│         │  password     │  生成 Token│              │ (含签名) │
+│         │ ←───────────  │           │               │         │
+│  存     │   { token:    │               ┌─────────┐ │         │
+│ Token   │     "xxx" }   │               │  不存储  │ │         │
+│         │               │               │  任何会话 │ │         │
+└─────────┘               └─────────┘     └─────────┘ └─────────┘
+        │
+        │ 后续请求携带 Token
+        │ Authorization: Bearer <token>
+        ↓
+┌─────────┐      请求      ┌─────────┐               ┌─────────┐
+│ Header: │ ───────────→  │  服务端  │               │  不查   │
+│Bearer   │               │  提取    │               │  数据库 │
+│<token>  │               │  Token   │               │  不查   │
+│         │ ←───────────  │  验签名   │               │  Session│
+│         │    返回数据    │  解析用户信息              │         │
+└─────────┘               └─────────┘               └─────────┘
+```
+
+**JWT 的优势**：
+- 服务端不存储会话信息（无状态）
+- 天然适合分布式/微服务
+- 减少数据库查询，性能更好
+
+---
+
+### 什么是 JWT？
+
+**JWT**（JSON Web Token）是一个包含用户信息的加密字符串，由三部分组成：
+
+```
+xxxxx.yyyyy.zzzzz
+  ↑      ↑      ↑
+Header  Payload  Signature
+(头部)  (载荷)   (签名)
+```
+
+#### 1. Header（头部）
+```json
+{
+  "alg": "HS256",  // 签名算法
+  "typ": "JWT"     // Token 类型
+}
+```
+Base64 编码 → `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9`
+
+#### 2. Payload（载荷）- 存放数据
+```json
+{
+  "userId": 1,          // 用户ID
+  "username": "zhangsan", // 用户名
+  "iat": 1712380800,    // 签发时间
+  "exp": 1712384400     // 过期时间
+}
+```
+Base64 编码 → `eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4ifQ`
+
+**⚠️ 注意**：Payload 只是 Base64 编码，**可以被解码看到内容**，不要放敏感信息（如密码）！
+
+#### 3. Signature（签名）- 防篡改
+```
+HMACSHA256(
+  base64Url(header) + "." + base64Url(payload),
+  secret  // 密钥，只有服务端知道
+)
+```
+
+**签名的作用**：
+- 没有密钥，无法生成有效的签名
+- Token 被篡改后，签名验证会失败
+- 保证 Token 是服务端签发的，不是伪造的
+
+---
+
+### 完整认证流程示例
+
+#### 第一步：注册（密码加密存储）
+```java
+// 用户发送：{ "username": "zhangsan", "password": "123456" }
+
+User user = new User();
+user.setUsername("zhangsan");
+user.setPassword(passwordEncoder.encode("123456"));  
+// 存储：$2a$10$bvPuZtGy6gIdo6L9DaopVuOLdIf7eLcWRd6Os9SYj03zYkS/.SEBi
+
+userRepository.save(user);
+```
+
+#### 第二步：登录（生成 JWT）
+```java
+// 1. 验证用户名密码
+User user = authService.login("zhangsan", "123456");
+
+// 2. 生成 JWT Token
+String token = jwtUtil.generateToken(user.getId(), user.getUsername());
+// 返回：eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4ifQ.xxxxx
+
+// 3. 返回给客户端
+return Result.success(new LoginResponse(user.getId(), user.getUsername(), token));
+```
+
+#### 第三步：后续请求（携带 Token）
+```http
+GET /api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4ifQ.xxxxx
+```
+
+#### 第四步：服务端验证 Token
+```java
+// 从 Header 提取 Token
+String token = authHeader.replace("Bearer ", "");
+
+// 验证 Token 有效性
+if (!jwtUtil.validateToken(token)) {
+    return Result.fail("Token 无效或已过期");
+}
+
+// 解析用户信息
+Long userId = jwtUtil.getUserIdFromToken(token);  // 1
+String username = jwtUtil.getUsernameFromToken(token);  // "zhangsan"
+
+// 使用用户信息执行业务逻辑...
+```
+
+---
+
+### BCrypt 密码加密
+
+**为什么不能用明文存储密码？**
+
+| 风险 | 说明 |
+|-----|------|
+| 数据库泄露 | 明文密码直接暴露 |
+| 内部人员风险 | DBA/运维可以看到所有密码 |
+| 用户习惯问题 | 很多人多个网站用同一密码 |
+
+**BCrypt 特点**：
+- **单向性**：明文 → 密文容易，密文 → 明文几乎不可能
+- **自动加盐**：相同密码每次加密结果不同
+- **慢计算**：增加暴力破解成本
+
+```java
+// 加密
+String encrypted = passwordEncoder.encode("123456");
+// 结果：$2a$10$bvPuZtGy6gIdo6L9DaopVuOLdIf7eLcWRd6Os9SYj03zYkS/.SEBi
+
+// 校验
+boolean match = passwordEncoder.matches("123456", encrypted);
+// 返回：true
+```
 
 ---
 
@@ -754,6 +1021,8 @@ public Result<User> create(@Valid @RequestBody User user) {
 | `@OneToMany` | 一对多关联 | Entity 字段 |
 | `@JoinColumn` | 外键列 | 关联字段 |
 | `@JsonIgnore` | JSON 忽略 | Entity 字段 |
+| `@Component` | 通用组件 | Util 工具类 |
+| `@Value` | 读取配置 | 字段上 |
 
 ---
 
@@ -771,3 +1040,5 @@ public Result<User> create(@Valid @RequestBody User user) {
 
 > **更新记录**：
 > - 2026-04-06：初始版本，覆盖 controller、service、repository、entity、common、config 各层
+> - 2026-04-06：新增 Spring Security + BCrypt 密码加密详解
+> - 2026-04-06：新增 JWT 无状态认证完整流程说明（Session vs JWT 对比、JWT 结构、完整认证流程示例）

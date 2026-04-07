@@ -12,7 +12,85 @@ body {
     line-height: 1.6;
 }
 
-/* 应用容器 */
+/* ==================== 登录/注册页面 ==================== */
+.auth-page {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 20px;
+}
+
+.auth-container {
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+    width: 100%;
+    max-width: 420px;
+    padding: 40px;
+    animation: authSlideIn 0.3s ease-out;
+}
+
+@keyframes authSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.auth-header {
+    text-align: center;
+    margin-bottom: 32px;
+}
+
+.auth-header .logo-icon {
+    font-size: 56px;
+    display: block;
+    margin-bottom: 16px;
+}
+
+.auth-header h1 {
+    font-size: 28px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 8px;
+}
+
+.auth-header p {
+    color: #6c757d;
+    font-size: 14px;
+}
+
+.auth-form h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 24px;
+    text-align: center;
+}
+
+.auth-switch {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 14px;
+    color: #6c757d;
+}
+
+.auth-switch a {
+    color: #667eea;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.auth-switch a:hover {
+    text-decoration: underline;
+}
+
+/* ==================== 应用容器 ==================== */
 .app {
     display: flex;
     flex-direction: column;
@@ -23,7 +101,7 @@ body {
     box-shadow: 0 0 20px rgba(0,0,0,0.1);
 }
 
-/* 顶部导航栏 */
+/* ==================== 顶部导航栏 ==================== */
 .header {
     display: flex;
     justify-content: space-between;
@@ -48,14 +126,34 @@ body {
     font-weight: 600;
 }
 
-/* 主容器 */
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
+.user-menu {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 8px;
+}
+
+.user-name {
+    font-weight: 500;
+    font-size: 14px;
+}
+
+/* ==================== 主容器 ==================== */
 .main-container {
     display: flex;
     flex: 1;
     overflow: hidden;
 }
 
-/* 左侧边栏 */
+/* ==================== 左侧边栏 ==================== */
 .sidebar {
     width: 280px;
     background-color: #f8f9fa;
@@ -119,7 +217,7 @@ body {
     gap: 8px;
 }
 
-/* 右侧内容区 */
+/* ==================== 右侧内容区 ==================== */
 .content {
     flex: 1;
     display: flex;
@@ -147,7 +245,7 @@ body {
     gap: 12px;
 }
 
-/* 文档列表 */
+/* ==================== 文档列表 ==================== */
 .document-list {
     flex: 1;
     overflow-y: auto;
@@ -195,7 +293,7 @@ body {
     gap: 8px;
 }
 
-/* 按钮样式 */
+/* ==================== 按钮样式 ==================== */
 .btn {
     display: inline-flex;
     align-items: center;
@@ -247,7 +345,52 @@ body {
     font-size: 12px;
 }
 
-/* 空状态 */
+.btn-block {
+    width: 100%;
+    padding: 12px;
+    font-size: 16px;
+}
+
+/* ==================== 表单样式 ==================== */
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.form-group .required {
+    color: #dc3545;
+}
+
+.form-group input,
+.form-group textarea {
+    width: 100%;
+    padding: 10px 14px;
+    border: 1px solid #ced4da;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+    font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.form-group textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+/* ==================== 空状态 ==================== */
 .empty-state {
     display: flex;
     flex-direction: column;
@@ -269,7 +412,7 @@ body {
     color: #6c757d;
 }
 
-/* 弹窗样式 */
+/* ==================== 弹窗样式 ==================== */
 .modal {
     display: none;
     position: fixed;
@@ -362,46 +505,7 @@ body {
     background-color: #f8f9fa;
 }
 
-/* 表单样式 */
-.form-group {
-    margin-bottom: 20px;
-}
-
-.form-group label {
-    display: block;
-    margin-bottom: 6px;
-    font-weight: 500;
-    font-size: 14px;
-}
-
-.form-group .required {
-    color: #dc3545;
-}
-
-.form-group input,
-.form-group textarea {
-    width: 100%;
-    padding: 10px 14px;
-    border: 1px solid #ced4da;
-    border-radius: 6px;
-    font-size: 14px;
-    transition: border-color 0.2s;
-    font-family: inherit;
-}
-
-.form-group input:focus,
-.form-group textarea:focus {
-    outline: none;
-    border-color: #667eea;
-    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-}
-
-.form-group textarea {
-    resize: vertical;
-    min-height: 100px;
-}
-
-/* 文档内容显示 */
+/* ==================== 文档内容显示 ==================== */
 .document-content {
     background-color: #f8f9fa;
     padding: 16px;
@@ -416,7 +520,7 @@ body {
     overflow-y: auto;
 }
 
-/* Toast 提示 */
+/* ==================== Toast 提示 ==================== */
 .toast {
     position: fixed;
     bottom: 24px;
@@ -449,8 +553,12 @@ body {
     background-color: #17a2b8;
 }
 
-/* 响应式设计 */
+/* ==================== 响应式设计 ==================== */
 @media (max-width: 768px) {
+    .auth-container {
+        padding: 24px;
+    }
+    
     .sidebar {
         width: 240px;
     }
@@ -461,6 +569,14 @@ body {
     
     .logo h1 {
         font-size: 18px;
+    }
+    
+    .user-menu {
+        padding: 4px 8px;
+    }
+    
+    .user-name {
+        display: none;
     }
     
     .content-header {

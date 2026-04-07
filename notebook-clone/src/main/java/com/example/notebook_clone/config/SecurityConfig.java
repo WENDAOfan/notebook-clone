@@ -41,6 +41,8 @@ public class SecurityConfig {
             
             // 配置授权规则
             .authorizeHttpRequests(auth -> auth
+                // 放行静态资源（前端页面）
+                .requestMatchers("/", "/index.html", "/css/**", "/js/**").permitAll()
                 // 放行注册和登录接口（无需认证）
                 .requestMatchers("/api/auth/**").permitAll()
                 // 放行 Day 11 的测试接口（临时）
