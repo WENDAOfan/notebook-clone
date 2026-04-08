@@ -1,5 +1,6 @@
 package com.example.notebook_clone.config;
 
+import com.example.notebook_clone.filter.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -8,50 +9,48 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-@Configuration
-@EnableWebSecurity//以上告诉 Spring：这是一个配置类，启用 Web 安全功能
+@Configuration//告诉 Spring 这是一个配置类，Spring 启动时会自动读取里面的配置
+@EnableWebSecurity//开启 WebSecurity 功能，如果不加这个注解，Spring Security 不会生效
 public class SecurityConfig {
 
-    /**
-     * 配置密码加密器
-     * BCrypt 是 Spring Security 推荐的加密方式
-     */
-    @Bean//Spring 会把这个对象放入"容器"，其他组件可以通过 @Autowired 或构造器注入使用
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
+    //面要把这个过滤器添加到安全过滤器链中，告诉 Spring Security："请你用我的 JWT 过滤器来验证 Token。
+    @Bean//把这个方法返回的对象注册到 Spring 容器中，其他地方可以通过注入来使用
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
-    /**
-     * 配置安全过滤器链
-     * Day 12 目标：放行注册和登录接口，禁用默认表单登录
-     */
-    @Bean//将这个配置注册为 Spring 容器管理的组件
-    //SecurityFilterChain：安全过滤器链，Spring Security 通过一系列过滤器来处理请求安全
-    // HttpSecurity：用于配置 HTTP 安全规则的构建器
+    @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    //安全过滤器链，这是 Spring Security 的核心。它定义了一组安全规则，Spring 会按照这些规则来处理每个请求
         http
-            // 禁用 CSRF（因为我们后续用 JWT，不需要 Session）
+            // 禁用 CSRF（前后端分离不需要）
             .csrf(csrf -> csrf.disable())
             
-            // 配置无状态会话（不创建 Session）
+            // 配置无状态会话
             .sessionManagement(session -> 
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
             
             // 配置授权规则
             .authorizeHttpRequests(auth -> auth
-                // 放行静态资源（前端页面）
-                .requestMatchers("/", "/index.html", "/css/**", "/js/**").permitAll()
                 // 放行注册和登录接口（无需认证）
                 .requestMatchers("/api/auth/**").permitAll()
-                // 放行 Day 11 的测试接口（临时）
-                .requestMatchers("/api/users/**").permitAll()
-                .requestMatchers("/api/notebooks/**").permitAll()
-                .requestMatchers("/api/documents/**").permitAll()
-                // 其他请求需要认证
+                
+                // 其他所有请求都需要认证
                 .anyRequest().authenticated()
-            );
+            )
+            
+            // ⭐ 添加 JWT 过滤器到 Security 过滤器链
+            // 在 UsernamePasswordAuthenticationFilter 之前执行
+            .addFilterBefore(jwtAuthenticationFilter, 
+                    UsernamePasswordAuthenticationFilter.class);
         
         return http.build();
     }

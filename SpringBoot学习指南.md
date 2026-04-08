@@ -23,11 +23,11 @@ notebook-clone/
 ├── src/main/java/com/example/notebook_clone/
 │   ├── NotebookCloneApplication.java    ← 【入口】程序启动类
 │   ├── controller/                      ← 【控制器层】接收 HTTP 请求
-│   │   ├── AuthController.java          ← 登录/注册接口
+│   │   ├── AuthController.java          ← 登录/注册/获取当前用户接口
+│   │   ├── TestController.java          ← 测试接口（验证JWT认证）
 │   │   ├── DocumentController.java      ← 文档相关接口
 │   │   ├── NotebookController.java      ← 笔记本相关接口
-│   │   ├── UserController.java          ← 用户相关接口
-│   │   └── HelloController.java         ← 测试用 Hello 接口
+│   │   └── UserController.java          ← 用户相关接口
 │   ├── service/                         ← 【业务层】处理业务逻辑
 │   │   └── AuthService.java             ← 登录/注册业务
 │   ├── repository/                      ← 【数据层】数据库操作
@@ -38,8 +38,10 @@ notebook-clone/
 │   │   ├── Document.java                ← 文档实体
 │   │   ├── Notebook.java                ← 笔记本实体
 │   │   └── User.java                    ← 用户实体
+│   ├── filter/                          ← 【过滤器层】请求拦截与预处理
+│   │   └── JwtAuthenticationFilter.java ← JWT认证过滤器（验证Token）
 │   ├── config/                          ← 【配置层】Spring 配置
-│   │   └── SecurityConfig.java          ← 安全配置（密码加密、权限）
+│   │   └── SecurityConfig.java          ← 安全配置（密码加密、权限、过滤器链）
 │   ├── util/                            ← 【工具层】工具类
 │   │   └── JwtUtil.java                 ← JWT Token 生成/校验工具
 │   └── common/                          ← 【公共层】通用工具
@@ -141,18 +143,33 @@ notebook-clone/
 
 ---
 
-### 📁 5. config/ - 配置层
+### 📁 5. filter/ - 过滤器层
+
+**作用**：在请求到达 Controller 之前，进行拦截和预处理
+
+**类比**：大楼门口的保安
+- 每个进来的人都要先过保安这一关
+- 保安检查你的通行证（Token），验证通过才放行
+- 没有通行证的人，保安不管（交给门禁规则判断）
+
+**核心类**：`JwtAuthenticationFilter`（继承 `OncePerRequestFilter`）
+
+**关键机制**：过滤器在 Spring Security 过滤器链中执行，在 Controller 之前运行
+
+---
+
+### 📁 6. config/ - 配置层
 
 **作用**：配置 Spring Boot 的各种组件
 
 **例子**：
-- `SecurityConfig.java`：配置密码加密方式、哪些接口需要登录才能访问
+- `SecurityConfig.java`：配置密码加密方式、哪些接口需要登录才能访问、JWT过滤器的位置
 
 **核心注解**：`@Configuration`, `@Bean`, `@EnableWebSecurity`
 
 ---
 
-### 📁 6. common/ - 公共层
+### 📁 7. common/ - 公共层
 
 **作用**：放置项目中通用的工具类
 
@@ -280,6 +297,114 @@ public class UserController {
     }
 }
 ```
+
+---
+
+#### `AuthController.java` - 认证接口控制器
+
+> 处理用户的注册、登录、获取当前用户信息。登录成功后返回 JWT Token。
+
+```java
+@RestController
+@RequestMapping("/api/auth")                  // ← 路径前缀（SecurityConfig 对此路径 permitAll）
+public class AuthController {
+
+    private final AuthService authService;    // ← 业务层（验证密码等）
+    private final JwtUtil jwtUtil;            // ← JWT 工具（生成Token）
+
+    // 构造器注入
+    public AuthController(AuthService authService, JwtUtil jwtUtil) {
+        this.authService = authService;
+        this.jwtUtil = jwtUtil;
+    }
+
+    // ===== 注册接口 =====
+    @PostMapping("/register")                 // POST /api/auth/register
+    public Result<User> register(@Valid @RequestBody RegisterRequest request) {
+        User user = authService.register(request.username(), request.password());
+        return Result.success(user);
+    }
+
+    // ===== 登录接口（核心！）=====
+    @PostMapping("/login")                    // POST /api/auth/login
+    public Result<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
+        // 1. 验证用户名密码
+        User user = authService.login(request.username(), request.password());
+        // 2. 生成 JWT Token
+        String token = jwtUtil.generateToken(user.getId(), user.getUsername());
+        // 3. 返回用户信息 + Token（不返回密码！）
+        return Result.success(new LoginResponse(user.getId(), user.getUsername(),
+                                                 user.getEmail(), token));
+    }
+
+    // ===== 获取当前登录用户信息 =====
+    @GetMapping("/me")                        // GET /api/auth/me
+    public Result<UserInfoResponse> getCurrentUser() {
+        // 从 SecurityContext 取用户名（JwtAuthenticationFilter 已存好）
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        return Result.success(new UserInfoResponse(null, username));
+    }
+
+    // ===== DTO 定义（内部 record 类）=====
+    public record RegisterRequest(            // 注册请求
+            @NotBlank(message = "用户名不能为空") String username,
+            @NotBlank(message = "密码不能为空") String password
+    ) {}
+
+    public record LoginRequest(               // 登录请求
+            @NotBlank(message = "用户名不能为空") String username,
+            @NotBlank(message = "密码不能为空") String password
+    ) {}
+
+    public record LoginResponse(              // 登录响应（含Token）
+            Long id, String username, String email, String token
+    ) {}
+
+    public record UserInfoResponse(           // 用户信息响应
+            Long userId, String username
+    ) {}
+}
+```
+
+**知识点**：
+- 登录接口不需要 Token，因为它就是"获取Token"的入口（不能鸡生蛋蛋生鸡）
+- `@Valid` + `@NotBlank`：自动校验参数，为空则返回 400 错误
+- `record`：Java 16+ 的纯数据类简写，自动生成构造器、getter、equals 等
+- `SecurityContextHolder.getContext().getAuthentication().getName()`：从安全上下文取当前用户名
+- 响应中**永远不返回密码**，这是安全基本原则
+
+---
+
+#### `TestController.java` - 测试接口控制器
+
+> 专门用来验证 JWT 认证是否生效。只有带有效 Token 的请求才能访问。
+
+```java
+@RestController
+@RequestMapping("/api/test")
+public class TestController {
+
+    // 获取当前登录用户信息
+    @GetMapping("/current-user")
+    public Result<String> getCurrentUser() {
+        // 从 SecurityContext 获取用户名（JwtAuthenticationFilter 已经存好）
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        return Result.success("当前登录用户：" + username);
+    }
+
+    // 简单的受保护接口
+    @GetMapping("/protected")
+    public Result<String> protectedEndpoint() {
+        return Result.success("这是一个受保护的接口，你已成功访问！");
+    }
+}
+```
+
+**测试效果**：
+- 不带 Token 访问 → 403 拒绝（SecurityConfig 要求认证）
+- 带有效 Token 访问 → 成功返回数据
 
 ---
 
@@ -588,122 +713,139 @@ public class GlobalExceptionHandler {
 
 ---
 
+### 🔹 Filter 层
+
+#### `JwtAuthenticationFilter.java` - JWT 认证过滤器
+
+> 这是整个 JWT 认证的**核心执行者**，相当于门口的保安。
+> 每个请求进来时，它负责：检查 Token → 验证 Token → 提取用户信息 → 存入安全上下文
+
+```java
+@Component                                      // ← Spring 管理的组件
+public class JwtAuthenticationFilter extends OncePerRequestFilter {  // ← 每个请求只过滤一次
+
+    private final JwtUtil jwtUtil;               // ← JWT 工具类（构造器注入）
+
+    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
+        this.jwtUtil = jwtUtil;
+    }
+
+    @Override
+    protected void doFilterInternal(HttpServletRequest request,      // ← HTTP 请求
+                                    HttpServletResponse response,     // ← HTTP 响应
+                                    FilterChain filterChain)           // ← 过滤器链（用于放行）
+            throws ServletException, IOException {
+
+        // ===== 第1步：从请求头获取 Authorization =====
+        String authHeader = request.getHeader("Authorization");
+        // 前端格式：Authorization: Bearer eyJhbGciOiJ...
+
+        // ===== 第2步：判断是否有合法的 Token 前缀 =====
+        if (!StringUtils.hasText(authHeader) || !authHeader.startsWith("Bearer ")) {
+            // 没有 Token → 放行（不是拒绝！后续 SecurityConfig 决定是否拦截）
+            filterChain.doFilter(request, response);
+            return;                              // ← 退出，不执行后续验证
+        }
+
+        // ===== 第3步：提取纯 Token（去掉 "Bearer " 前缀）=====
+        String token = authHeader.substring(7);  // "Bearer " 正好7个字符
+
+        // ===== 第4步：验证 Token 是否有效 =====
+        if (!jwtUtil.validateToken(token)) {
+            // Token 无效 → 返回 401 未授权，请求到此结束
+            response.setStatus(401);
+            response.setContentType("application/json;charset=UTF-8");
+            response.getWriter().write("{\"code\":401,\"message\":\"Token 无效或已过期\"}");
+            return;                              // ← 不放行！
+        }
+
+        // ===== 第5步：Token 有效，提取用户信息 =====
+        Long userId = jwtUtil.getUserIdFromToken(token);
+        String username = jwtUtil.getUsernameFromToken(token);
+
+        // ===== 第6步：将用户信息存入 SecurityContext（关键！）=====
+        // 相当于保安在"访客登记表"上写下你的名字
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(
+                        username,                    // 主体（你是谁）
+                        null,                        // 凭证（密码，已验证过不传）
+                        Collections.emptyList()      // 权限列表（暂为空）
+                );
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+        // ===== 第7步：放行，请求继续走向 Controller =====
+        filterChain.doFilter(request, response);
+    }
+}
+```
+
+**知识点**：
+- `OncePerRequestFilter`：保证每个请求只经过一次此过滤器
+- `filterChain.doFilter()`：放行，让请求继续走；不放行则请求到此结束
+- `SecurityContextHolder`：Spring Security 的"安全上下文"，存储当前登录用户信息
+- 没有 Token 时**放行而不是拒绝**，因为有些接口（登录/注册）本身不需要 Token
+
+---
+
 ### 🔹 Config 层
 
 #### `SecurityConfig.java` - 安全配置
 
+> 这是整个安全体系的**指挥中心**，相当于大楼的门禁管理规章制度。
+> 它定义了：用什么锁（密码加密）、哪些门不需要刷卡（放行规则）、谁来检查通行证（JWT过滤器位置）。
+
 ```java
 @Configuration                                  // ← 配置类
-@EnableWebSecurity                             // ← 启用安全功能
+@EnableWebSecurity                             // ← 启用 Web 安全功能
 public class SecurityConfig {
 
-    @Bean                                       // ← 注册为 Spring Bean
+    private final JwtAuthenticationFilter jwtAuthenticationFilter;  // ← JWT 过滤器
+
+    // 构造器注入 JWT 过滤器
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthenticationFilter) {
+        this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+    }
+
+    // ===== 密码加密器 =====
+    @Bean
     public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();     // BCrypt 加密器
-    }
-```
-
-**知识点**：
-- `@Configuration`：标记配置类
-- `@Bean`：将方法返回值注册为 Spring 管理的对象
-- `PasswordEncoder`：密码加密接口
-
----
-
-#### `JwtUtil.java` - JWT Token 工具类
-
-```java
-@Component                                      // ← Spring 管理的组件
-public class JwtUtil {
-
-    @Value("${jwt.secret}")                     // ← 从配置文件读取密钥
-    private String secret;
-
-    @Value("${jwt.expiration}")                 // ← 从配置文件读取过期时间
-    private Long expiration;
-
-    /**
-     * 生成 JWT Token
-     */
-    public String generateToken(Long userId, String username) {
-        Date now = new Date();
-        Date expiryDate = new Date(now.getTime() + expiration);
-
-        Map<String, Object> claims = new HashMap<>();
-        claims.put("userId", userId);
-        claims.put("username", username);
-
-        return Jwts.builder()
-                .claims(claims)              // 自定义数据（Payload）
-                .subject(username)           // 主题
-                .issuedAt(now)               // 签发时间
-                .expiration(expiryDate)      // 过期时间
-                .signWith(getSigningKey())   // 签名
-                .compact();                  // 生成字符串
+        return new BCryptPasswordEncoder();     // BCrypt 加密（推荐）
     }
 
-    /**
-     * 从 Token 中提取用户ID
-     */
-    public Long getUserIdFromToken(String token) {
-        Claims claims = parseToken(token);
-        return claims.get("userId", Long.class);
-    }
-
-    /**
-     * 验证 Token 是否有效
-     */
-    public boolean validateToken(String token) {
-        try {
-            parseToken(token);
-            return true;
-        } catch (ExpiredJwtException e) {
-            System.out.println("Token 已过期");
-        } catch (SecurityException e) {
-            System.out.println("Token 签名验证失败");
-        }
-        return false;
-    }
-
-    /**
-     * 解析 Token
-     */
-    public Claims parseToken(String token) {
-        return Jwts.parser()
-                .verifyWith(getSigningKey())
-                .build()
-                .parseSignedClaims(token)
-                .getPayload();
-    }
-}
-
+    // ===== 安全过滤器链（核心配置）=====
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            // 禁用 CSRF
+            // 1. 禁用 CSRF（JWT 不需要，因为不用 Cookie）
             .csrf(csrf -> csrf.disable())
-            
-            // 无状态会话（不创建 Session）
-            .sessionManagement(session -> 
+
+            // 2. 无状态会话（不创建 Session，JWT 是无状态的）
+            .sessionManagement(session ->
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
-            
-            // 配置权限
+
+            // 3. 配置授权规则
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/**").permitAll()    // 放行
-                .requestMatchers("/api/users/**").permitAll()   // 放行
-                .anyRequest().authenticated()                    // 其他需登录
-            );
-        
+                .requestMatchers("/api/auth/**").permitAll()    // ← 放行（注册/登录）
+                .requestMatchers("/", "/css/**", "/js/**").permitAll()  // ← 放行静态资源
+                .anyRequest().authenticated()                    // ← 其他需认证
+            )
+
+            // 4. 将 JWT 过滤器加入安全链（在默认的表单登录过滤器之前）
+            .addFilterBefore(jwtAuthenticationFilter,
+                    UsernamePasswordAuthenticationFilter.class);
+
         return http.build();
     }
 }
 ```
 
 **知识点**：
-- `@Configuration`：标记配置类
-- `@Bean`：将方法返回值注册为 Spring 管理的对象
-- `PasswordEncoder`：密码加密接口
+- `csrf.disable()`：JWT 不用 Cookie，不受 CSRF 攻击，所以禁用
+- `STATELESS`：不创建 Session，每次请求靠 Token 自行证明身份
+- `permitAll()`：允许所有人访问（不需要 Token）
+- `authenticated()`：需要已认证才能访问
+- `addFilterBefore(A, B)`：把过滤器 A 插到 B 之前，确保 JWT 验证在授权检查之前执行
 
 ---
 
@@ -939,6 +1081,142 @@ boolean match = passwordEncoder.matches("123456", encrypted);
 
 ---
 
+### JWT 认证过滤器机制（核心！）
+
+整个 JWT 认证由**三个组件协作完成**，各司其职：
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    三个组件的分工                                  │
+├──────────────────────┬───────────────────────────────────────────┤
+│ JwtAuthenticationFilter │ 保安：检查每个请求的 Token               │
+│ （过滤器）               │ 有效 → 存用户信息 → 放行                 │
+│                        │ 无效 → 返回401                          │
+│                        │ 没带 → 放行（交给门禁规则判断）            │
+├──────────────────────┼───────────────────────────────────────────┤
+│ SecurityConfig        │ 门禁规则：决定哪些路径需要认证              │
+│ （配置类）              │ /api/auth/** → 放行                     │
+│                       │ 其他 → 需要认证                          │
+├──────────────────────┼───────────────────────────────────────────┤
+│ JwtUtil              │ 工具人：生成/解析/验证 Token                │
+│ （工具类）              │ 被过滤器和 Controller 调用               │
+└──────────────────────┴───────────────────────────────────────────┘
+```
+
+#### 请求处理的完整流程
+
+```
+HTTP 请求进来
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│ JwtAuthenticationFilter（保安检查）       │
+│                                         │
+│  有 Token？                             │
+│  ├─ 没有 → 放行（不拦截）               │
+│  ├─ 有但无效 → 返回 401（拦截！）        │
+│  └─ 有且有效 → 存入 SecurityContext → 放行│
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────┐
+│ SecurityConfig 授权检查（门禁规则）       │
+│                                         │
+│  路径匹配 /api/auth/**？                │
+│  ├─ 是 → permitAll()，直接放行 ✅        │
+│  └─ 否 → 检查 SecurityContext           │
+│       ├─ 有用户信息 → authenticated() ✅ │
+│       └─ 无用户信息 → 拒绝访问 ❌ (403)  │
+└──────────────────┬──────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────┐
+│ Controller（处理业务）                   │
+│                                         │
+│  可通过 SecurityContextHolder            │
+│  获取当前登录用户信息                     │
+└─────────────────────────────────────────┘
+```
+
+#### SecurityContext 机制
+
+`SecurityContext` 是 Spring Security 的"访客登记表"，整个认证的关键桥梁：
+
+```
+JwtAuthenticationFilter 写入                    Controller 读取
+        │                                            │
+        ▼                                            ▼
+SecurityContextHolder                    SecurityContextHolder
+    .getContext()                           .getContext()
+    .setAuthentication(authentication)      .getAuthentication()
+                                            .getName()
+        │                                            │
+        ▼                                            ▼
+  存入用户名 "zhangsan"                        取出用户名 "zhangsan"
+```
+
+- **谁写入**：`JwtAuthenticationFilter`（第6步）
+- **谁读取**：任何 Controller，通过 `SecurityContextHolder.getContext().getAuthentication()`
+- **生命周期**：每次请求创建，请求结束销毁（线程隔离）
+
+#### 为什么没 Token 也放行？
+
+`JwtAuthenticationFilter` 的原则是："**我只验证有 Token 的请求，没 Token 的不归我管**"。
+
+这是因为：
+- 登录、注册接口本身不需要 Token
+- 静态资源（HTML/CSS/JS）不需要 Token
+- 是否需要认证由 `SecurityConfig` 的 `permitAll()` / `authenticated()` 来决定
+
+如果过滤器把没 Token 的请求直接拒绝，那登录接口就永远无法访问了。
+
+---
+
+### DTO 与 record 模式
+
+**DTO**（Data Transfer Object）是专门用于接收请求或返回响应的数据对象。
+
+#### 为什么需要 DTO？
+
+| 不用 DTO（直接用 Entity） | 用 DTO |
+|--------------------------|--------|
+| 返回 User 对象时，密码也会被返回 | LoginResponse 中不包含密码字段 |
+| 请求和响应混用同一个类 | 请求和响应各用各的类，职责清晰 |
+| 无法对请求和响应分别校验 | RegisterRequest 有 @NotBlank，Entity 不需要 |
+
+#### record 语法（Java 16+）
+
+```java
+// record 写法（一行搞定）
+public record LoginRequest(
+    @NotBlank String username,
+    @NotBlank String password
+) {}
+
+// 等价于传统写法（一大堆代码）
+public class LoginRequest {
+    private final String username;
+    private final String password;
+    public LoginRequest(String username, String password) { ... }
+    public String username() { return username; }
+    public String password() { return password; }
+    // 还自动生成 equals()、hashCode()、toString()
+}
+```
+
+#### 项目中的 DTO 设计
+
+| DTO | 用途 | 包含字段 |
+|-----|------|---------|
+| `RegisterRequest` | 注册请求 | username, password |
+| `LoginRequest` | 登录请求 | username, password |
+| `LoginResponse` | 登录响应 | id, username, email, **token** |
+| `UserInfoResponse` | 用户信息响应 | userId, username |
+
+> 注意：所有响应 DTO 中都**没有 password 字段**，这是安全的基本原则。
+
+---
+
 ### 3. 关联关系注解
 
 | 注解 | 关系 | 示例 |
@@ -990,6 +1268,7 @@ public Result<User> create(@Valid @RequestBody User user) {
 | `@Entity` | 数据库实体 | Entity 类 |
 | `@Table(name = "xxx")` | 指定表名 | Entity 类 |
 | `@Configuration` | 配置类 | Config 类 |
+| `@EnableWebSecurity` | 启用 Spring Security Web 安全功能 | Config 类 |
 | `@RestControllerAdvice` | 全局异常处理 | ExceptionHandler 类 |
 
 ### 方法级别注解
@@ -1015,7 +1294,7 @@ public Result<User> create(@Valid @RequestBody User user) {
 | `@PathVariable` | URL 路径参数 | 方法参数 |
 | `@RequestParam` | URL 查询参数 | 方法参数 |
 | `@Valid` | 触发参数校验 | 方法参数 |
-| `@NotBlank` | 非空校验 | Entity 字段 |
+| `@NotBlank` | 非空校验（不能为null、空串、纯空格） | Entity/DTO 字段 |
 | `@Size` | 长度校验 | Entity 字段 |
 | `@ManyToOne` | 多对一关联 | Entity 字段 |
 | `@OneToMany` | 一对多关联 | Entity 字段 |
@@ -1042,3 +1321,10 @@ public Result<User> create(@Valid @RequestBody User user) {
 > - 2026-04-06：初始版本，覆盖 controller、service、repository、entity、common、config 各层
 > - 2026-04-06：新增 Spring Security + BCrypt 密码加密详解
 > - 2026-04-06：新增 JWT 无状态认证完整流程说明（Session vs JWT 对比、JWT 结构、完整认证流程示例）
+> - 2026-04-08：新增 JWT 认证过滤器机制详解（过滤器链协作、SecurityContext 机制、请求完整流程图）
+> - 2026-04-08：新增 JwtAuthenticationFilter 逐行解析
+> - 2026-04-08：新增 AuthController、TestController 逐行解析（含 DTO record 模式说明）
+> - 2026-04-08：修复 SecurityConfig 章节（拆分与 JwtUtil 混合的代码，完善 addFilterBefore 说明）
+> - 2026-04-08：更新项目结构图（新增 filter/ 文件夹、TestController）
+> - 2026-04-08：新增 DTO 与 record 模式知识点
+> - 2026-04-08：注解速查表补充 @EnableWebSecurity 等注解

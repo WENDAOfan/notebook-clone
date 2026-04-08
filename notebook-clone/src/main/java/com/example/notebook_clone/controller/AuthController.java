@@ -6,6 +6,8 @@ import com.example.notebook_clone.service.AuthService;
 import com.example.notebook_clone.util.JwtUtil;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -55,32 +57,25 @@ public class AuthController {
     }
 
     /**
-     * 获取当前登录用户信息（测试接口）
+     * 获取当前登录用户信息（简化版）
      * GET /api/auth/me
-     * 需要在请求头中携带：Authorization: Bearer <token>
+     * 
+     * 由于 JWT 过滤器已经校验过 Token 并设置了 SecurityContext，
+     * 这里直接从 SecurityContext 获取用户信息即可
      */
     @GetMapping("/me")
-    public Result<UserInfoResponse> getCurrentUser(
-            @RequestHeader("Authorization") String authHeader) {
+    public Result<UserInfoResponse> getCurrentUser() {
+        // 从 SecurityContext 获取用户名（过滤器已经设置好了）
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
         
-        // 1. 从 Header 中提取 Token（去掉 "Bearer " 前缀）
-        String token = authHeader.replace("Bearer ", "");
-
-        // 2. 验证 Token
-        if (!jwtUtil.validateToken(token)) {
-            return Result.fail("Token 无效或已过期");
-        }
-
-        // 3. 从 Token 中提取用户信息
-        Long userId = jwtUtil.getUserIdFromToken(token);
-        String username = jwtUtil.getUsernameFromToken(token);
-
-        // 4. 返回用户信息
-        UserInfoResponse response = new UserInfoResponse(userId, username);
+        // 实际项目中，这里应该根据 username 查询数据库获取完整用户信息
+        // 简化示例，直接返回用户名
+        UserInfoResponse response = new UserInfoResponse(null, username);
         return Result.success(response);
     }
 
-    // ========== DTO 定义 ==========
+    // ========== DTO Data Transfer Object（数据传输对象）定义 ==========
 
     public record RegisterRequest(
             @NotBlank(message = "用户名不能为空") String username,

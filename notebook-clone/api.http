@@ -251,3 +251,47 @@ GET http://localhost:8080/api/auth/me
 ### Day13-5. 使用错误格式的 Authorization 头部（应该失败）
 GET http://localhost:8080/api/auth/me
 Authorization: Basic wangsi:123456
+
+### ========== Day 14 JWT 过滤器测试 ==========
+
+### Day14-0. 先登录获取 Token（如果没有的话）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+### Day14-1. 未携带 Token 访问受保护接口（应该 401）
+### 注意：这是测试过滤器是否生效
+GET http://localhost:8080/api/test/protected
+
+### Day14-2. 未携带 Token 访问笔记本接口（应该 401）
+### Day 14 之前这个接口是放行的，现在需要 Token 了
+GET http://localhost:8080/api/notebooks
+
+### Day14-3. 携带 Token 访问受保护接口（应该成功）
+### ⚠️ 注意：把 Bearer 后面的 token 换成真实的！
+GET http://localhost:8080/api/test/protected
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NTY1NTc1MCwiZXhwIjoxNzc1NzQyMTUwfQ.Qs-23617adx_BD46Tvtqk1yJQWPuButzDt7JqaWggQc
+
+### Day14-4. 携带 Token 访问 /api/test/current-user（应该成功）
+### ⚠️ 注意：把 Bearer 后面的 token 换成真实的！
+GET http://localhost:8080/api/test/current-user
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NTY1NTc1MCwiZXhwIjoxNzc1NzQyMTUwfQ.Qs-23617adx_BD46Tvtqk1yJQWPuButzDt7JqaWggQc
+
+### Day14-5. 携带 Token 访问简化版 /me 接口（应该成功）
+### ⚠️ 注意：把 Bearer 后面的 token 换成真实的！
+GET http://localhost:8080/api/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NTY1NTc1MCwiZXhwIjoxNzc1NzQyMTUwfQ.Qs-23617adx_BD46Tvtqk1yJQWPuButzDt7JqaWggQc
+
+### Day14-6. 携带 Token 访问笔记本接口（应该成功）
+### 现在需要携带 Token 才能访问了
+### ⚠️ 注意：把 Bearer 后面的 token 换成真实的！
+GET http://localhost:8080/api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NTY1NTc1MCwiZXhwIjoxNzc1NzQyMTUwfQ.Qs-23617adx_BD46Tvtqk1yJQWPuButzDt7JqaWggQc
+
+### Day14-7. 无效 Token 访问受保护接口（应该 401）
+GET http://localhost:8080/api/test/protected
+Authorization: Bearer invalid.token.here
