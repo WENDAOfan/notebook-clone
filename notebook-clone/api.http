@@ -295,3 +295,41 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhb
 ### Day14-7. 无效 Token 访问受保护接口（应该 401）
 GET http://localhost:8080/api/test/protected
 Authorization: Bearer invalid.token.here
+### ========== Day 15 自动关联当前用户测试 ==========
+
+### Day15-1. 先登录获取 Token（如果没有的话）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+### Day15-2. 创建笔记本（不需要传 user，自动关联当前登录用户）
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjQzNDUwNSwiZXhwIjoxNzc2NTIwOTA1fQ.3dvfKIJxwFk5uhT4FF8EKXLAPUusGeDhBGysm3i5bt8
+
+{
+  "name": "Day15 自动关联测试",
+  "description": "这个笔记本会自动关联到当前登录用户"
+}
+
+### Day15-3. 查询所有笔记本，验证是否关联了当前用户
+GET http://localhost:8080/api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjQzNDUwNSwiZXhwIjoxNzc2NTIwOTA1fQ.3dvfKIJxwFk5uhT4FF8EKXLAPUusGeDhBGysm3i5bt8
+
+### Day15-4. 创建文档（不需要传 user，只需要传 notebookId）
+POST http://localhost:8080/api/documents?notebookId=16
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjQzNDUwNSwiZXhwIjoxNzc2NTIwOTA1fQ.3dvfKIJxwFk5uhT4FF8EKXLAPUusGeDhBGysm3i5bt8
+
+{
+  "title": "Day15 测试文档",
+  "content": "这个文档会自动关联到当前登录用户"
+}
+
+### Day15-5. 查询笔记本下的文档，验证是否关联了用户
+GET http://localhost:8080/api/documents/notebook/1
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjQzNDUwNSwiZXhwIjoxNzc2NTIwOTA1fQ.3dvfKIJxwFk5uhT4FF8EKXLAPUusGeDhBGysm3i5bt8

@@ -1,5 +1,9 @@
 package com.example.notebook_clone.controller;
 
+import com.example.notebook_clone.entity.User;
+import com.example.notebook_clone.repository.UserRepository;
+import org.springframework.security.core.context.SecurityContextHolder;
+
 import com.example.notebook_clone.entity.Document;
 import com.example.notebook_clone.entity.Notebook;
 import com.example.notebook_clone.repository.DocumentRepository;
@@ -22,21 +26,33 @@ public class DocumentController {
 
     private final DocumentRepository documentRepository;
     private final NotebookRepository notebookRepository;
+    private final UserRepository userRepository;  // Day 15 新增
 
-    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository) {
+    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository) {
         this.documentRepository = documentRepository;
         this.notebookRepository = notebookRepository;
-    }
+       this.userRepository = userRepository; }
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
-    @PostMapping
+@PostMapping
+public Result<Document> createDocument(@Valid @RequestBody Document document, @RequestParam Long notebookId) {
+    // 1. 查询并设置笔记本
+    Notebook notebook = notebookRepository.findById(notebookId)
+            .orElseThrow(() -> new RuntimeException("笔记本不存在！"));
+    document.setNotebook(notebook);
     
-    // 改成：先查 Notebook，再关联
-    public Result<Document> createDocument(@Valid @RequestBody Document document, @RequestParam Long notebookId) {
-        Notebook notebook = notebookRepository.findById(notebookId).orElseThrow(() -> new RuntimeException("笔记本不存在！"));
-        document.setNotebook(notebook);
-        notebook.getDocuments().add(document); // 同步双向关联
-        document.setCreateTime(LocalDateTime.now());
+    // ===== Day 15：自动关联当前登录用户 =====
+    // 2. 从 SecurityContext 获取当前登录用户名
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    
+    // 3. 查询用户实体并设置关联
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+    document.setUser(currentUser);
+    // =========================================
+    
+    document.setCreateTime(LocalDateTime.now());
     return Result.success(documentRepository.save(document));
 }
     // 接口 2：查看某个特定笔记本下的所有文档 (GET 请求)
@@ -66,6 +82,13 @@ public class DocumentController {
             //document.setNotebookId(notebookId);
             // 把注释掉的 setNotebookId 改成：
             document.setNotebook(notebook);
+            // ===== Day 15：自动关联当前登录用户 =====
+            String username = SecurityContextHolder.getContext()
+                    .getAuthentication().getName();
+            User currentUser = userRepository.findByUsername(username)
+                    .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+            document.setUser(currentUser);
+            // =========================================
             notebook.getDocuments().add(document); // 同步双向关联
             document.setTitle(fileName);
             document.setContent(extractedText); // 把提取出来的几万字塞进去

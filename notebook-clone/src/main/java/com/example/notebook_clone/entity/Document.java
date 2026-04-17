@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty.Access;
 
 import lombok.Data;
 import jakarta.validation.constraints.NotBlank;
@@ -23,6 +25,13 @@ public class Document {
     @JoinColumn(name = "notebook_id")
     @JsonIgnore  // ← 添加这行：序列化时不输出 notebook 字段，避免死循环
     private Notebook notebook;
+
+    // 关联用户（Day 15 新增）
+    @ManyToOne
+    @JoinColumn(name = "user_id")
+    @JsonProperty(access = Access.WRITE_ONLY)
+    private User user;
+
     // 资料的标题（比如：Spring教程.pdf）
     @NotBlank(message = "文档标题不能为空")
     private String title;

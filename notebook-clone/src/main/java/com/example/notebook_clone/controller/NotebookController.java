@@ -3,7 +3,7 @@ package com.example.notebook_clone.controller;
 import com.example.notebook_clone.entity.Notebook;
 import com.example.notebook_clone.repository.NotebookRepository;
 import org.springframework.web.bind.annotation.*;
-
+import org.springframework.security.core.context.SecurityContextHolder;
 import java.time.LocalDateTime;
 import java.util.List;
 import jakarta.validation.Valid;
@@ -36,29 +36,20 @@ public class NotebookController {
     // 接口 2：创建一个新笔记本 (POST 请求)
     @PostMapping
     public Result<Notebook> createNotebook(@Valid @RequestBody Notebook notebook) {
-
-        // 🔍 调试日志：打印收到的请求内容
-        System.out.println("=== 收到的笔记本数据 ===");
-        System.out.println("name: " + notebook.getName());
-        System.out.println("user: " + notebook.getUser());
-        if (notebook.getUser() != null) {
-            System.out.println("user.id: " + notebook.getUser().getId());
-        }
-
-        // ===== 核心：处理 User 关联 =====
-        if (notebook.getUser() != null && notebook.getUser().getId() != null) {
-            System.out.println("→ 正在查找真实 User 对象...");
-            User realUser = userRepository.findById(notebook.getUser().getId())
-                    .orElseThrow(() -> new RuntimeException("用户不存在，ID: " + notebook.getUser().getId()));
-
-            System.out.println("→ 找到真实User: " + realUser.getUsername());
-            // 把"假 User"替换成"真 User"
-            notebook.setUser(realUser);
-            System.out.println("→ 已替换为真实User对象");
-        } else {
-            System.out.println("⚠️ 请求中没有 user 信息或 user.id 为空！");
-        }
-
+        
+        // ===== Day 15：自动关联当前登录用户 =====
+        // 1. 从 SecurityContext 获取当前登录用户名
+        String username = SecurityContextHolder.getContext()//获取 Security 上下文
+                .getAuthentication().getName();//获取当前认证信息，获取用户名
+        
+        // 2. 查询用户实体
+        User currentUser = userRepository.findByUsername(username)//根据用户名查用户实体
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        
+        // 3. 设置关联
+        notebook.setUser(currentUser);
+        // =========================================
+        
         notebook.setCreateTime(LocalDateTime.now());
         return Result.success(notebookRepository.save(notebook));
     }
@@ -66,17 +57,26 @@ public class NotebookController {
     // 接口 3：修改笔记本的名称或描述 (PUT 请求，专门用于修改)
     // 路径例如：/api/notebooks/1 (代表修改 ID 为 1 的笔记本)
     @PutMapping("/{id}")
-    public Result<Notebook> updateNotebook(@PathVariable Long id,@Valid @RequestBody Notebook updatedNotebook) {
-        // 1. 先让管家去数据库里找找看，有没有这个 ID 的笔记本
+    public Result<Notebook> updateNotebook(@PathVariable Long id, 
+                                        @Valid @RequestBody Notebook updatedNotebook) {
+        
+        // Day 16 预告：这里还应该检查当前用户是否有权限修改这个笔记本！
+        
         return notebookRepository.findById(id)
-                .map(existingNotebook -> {
-                    // 2. 如果找到了，就把传过来的新名字和新描述替换进去
-                    existingNotebook.setName(updatedNotebook.getName());
-                    existingNotebook.setDescription(updatedNotebook.getDescription());
-                    // 3. 保存回数据库（因为 ID 没变，JPA 会自动执行 UPDATE 操作而不是新增）
-                    return Result.success(notebookRepository.save(existingNotebook));
-                })
-                .orElseThrow(() -> new RuntimeException("修改失败：没找到 ID 为 " + id + " 的笔记本！"));
+            .map(existingNotebook -> {
+                existingNotebook.setName(updatedNotebook.getName());
+                existingNotebook.setDescription(updatedNotebook.getDescription());
+                
+                // 防御性编程：确保 user 不被意外覆盖（虽然现在不会）
+                // 如果 updatedNotebook 传了 user，且不为 null 才更新
+                if (updatedNotebook.getUser() != null) {
+                    existingNotebook.setUser(updatedNotebook.getUser());
+                }
+                // 如果前端没传 user（为 null），保持原值不变
+                
+                return Result.success(notebookRepository.save(existingNotebook));
+            })
+            .orElseThrow(() -> new RuntimeException("笔记本不存在"));
     }
 
     // 接口 4：把整个笔记本扔进垃圾桶 (DELETE 请求)

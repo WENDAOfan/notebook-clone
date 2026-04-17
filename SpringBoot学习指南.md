@@ -35,8 +35,8 @@ notebook-clone/
 │   │   ├── NotebookRepository.java      ← 笔记本数据访问
 │   │   └── UserRepository.java          ← 用户数据访问
 │   ├── entity/                          ← 【实体层】数据模型（对应数据库表）
-│   │   ├── Document.java                ← 文档实体
-│   │   ├── Notebook.java                ← 笔记本实体
+│   │   ├── Document.java                ← 文档实体（关联 Notebook、User）
+│   │   ├── Notebook.java                ← 笔记本实体（关联 User）
 │   │   └── User.java                    ← 用户实体
 │   ├── filter/                          ← 【过滤器层】请求拦截与预处理
 │   │   └── JwtAuthenticationFilter.java ← JWT认证过滤器（验证Token）
@@ -1159,6 +1159,78 @@ SecurityContextHolder                    SecurityContextHolder
 - **谁读取**：任何 Controller，通过 `SecurityContextHolder.getContext().getAuthentication()`
 - **生命周期**：每次请求创建，请求结束销毁（线程隔离）
 
+---
+
+### SecurityContextHolder 的实际应用（Day 15）
+
+#### 场景：创建资源时自动关联当前用户
+
+**Day 11 的做法**（前端传 userId）：
+```json
+POST /api/notebooks
+{
+  "name": "我的笔记本",
+  "user": { "id": 3 }  // ⚠️ 需要前端传，可被伪造！
+}
+```
+
+**Day 15 的做法**（后端自动获取）：
+```json
+POST /api/notebooks
+Authorization: Bearer xxx
+{
+  "name": "我的笔记本"
+  // 不需要传 user！
+}
+```
+
+**Controller 代码**：
+```java
+@PostMapping
+public Result<Notebook> createNotebook(@Valid @RequestBody Notebook notebook) {
+    // ===== 自动关联当前登录用户 =====
+    // 1. 从 SecurityContext 获取当前登录用户名
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    
+    // 2. 查询用户实体
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在"));
+    
+    // 3. 设置关联
+    notebook.setUser(currentUser);
+    // =================================
+    
+    notebook.setCreateTime(LocalDateTime.now());
+    return Result.success(notebookRepository.save(notebook));
+}
+```
+
+**好处**：
+- 前端更简单（少传一个字段）
+- 无法伪造（Token 里是谁，就是谁）
+- 更安全（防止恶意用户把资源关联到别人账号）
+
+#### 完整的数据流转
+
+```
+用户登录
+    ↓
+后端返回 JWT Token（包含用户名）
+    ↓
+前端存储 Token
+    ↓
+前端请求创建笔记本（Header 携带 Token）
+    ↓
+JWT Filter 校验 Token，提取用户名存入 SecurityContext
+    ↓
+Controller 从 SecurityContextHolder 获取用户名
+    ↓
+查询 User 实体，设置到 Notebook 对象
+    ↓
+保存到数据库（自动关联 user_id）
+```
+
 #### 为什么没 Token 也放行？
 
 `JwtAuthenticationFilter` 的原则是："**我只验证有 Token 的请求，没 Token 的不归我管**"。
@@ -1328,3 +1400,4 @@ public Result<User> create(@Valid @RequestBody User user) {
 > - 2026-04-08：更新项目结构图（新增 filter/ 文件夹、TestController）
 > - 2026-04-08：新增 DTO 与 record 模式知识点
 > - 2026-04-08：注解速查表补充 @EnableWebSecurity 等注解
+> - 2026-04-17：新增 SecurityContextHolder 实际应用（Day 15）：创建资源时自动关联当前用户、完整数据流转图
