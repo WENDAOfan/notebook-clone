@@ -12,6 +12,8 @@
 2. [各文件夹作用详解](#第二步-各文件夹作用详解)
 3. [Java 文件逐个解析](#第三步-java-文件逐个解析)
 4. [核心知识点汇总](#第四步-核心知识点汇总)
+   - [JPA 派生查询方法](#3-jpa-派生查询方法derived-query-methods)
+   - [数据隔离与权限控制（Day 16）](#6-数据隔离与权限控制day-16)
 5. [常用注解速查表](#第五步-常用注解速查表)
 
 ---
@@ -1289,7 +1291,174 @@ public class LoginRequest {
 
 ---
 
-### 3. 关联关系注解
+### 3. JPA 派生查询方法（Derived Query Methods）
+
+Spring Data JPA 最强大的特性之一：**只需按规则命名方法，Spring 自动生成对应的 SQL，无需手写实现。**
+
+#### 3.1 命名规则结构
+
+```
+[操作前缀] + By + [属性名] + [操作] + [连接词] + [属性名] + [操作] + [OrderBy...]
+```
+
+#### 3.2 操作前缀（开头关键字）
+
+| 前缀 | 作用 | 返回类型 | 示例 |
+|-----|------|---------|------|
+| `findBy` / `findAllBy` | **查询** | 实体 / `List` / `Optional` | `findByName` |
+| `findFirstBy` | 查第一条 | 单个实体 | `findFirstByUserId` |
+| `findTop3By` | 查前 N 条 | `List` | `findTop3ByCreateTimeDesc` |
+| `getBy` / `readBy` | 查询（同 `findBy`） | 实体 | `getById` |
+| `countBy` | **统计数量** | `long` | `countByUserId` |
+| `existsBy` | **判断存在** | `boolean` | `existsByIdAndUserId` |
+| `deleteBy` / `removeBy` | **删除** | `void` / `long` | `deleteByStatus` |
+
+#### 3.3 条件关键字（中间连接）
+
+**逻辑连接：**
+
+| 关键字 | SQL 对应 | 示例 | 生成的 SQL |
+|-------|---------|------|-----------|
+| `And` | `AND` | `findByNameAndAge` | `WHERE name = ? AND age = ?` |
+| `Or` | `OR` | `findByNameOrEmail` | `WHERE name = ? OR email = ?` |
+
+**比较操作：**
+
+| 关键字 | SQL 对应 | 示例 | 生成的 SQL |
+|-------|---------|------|-----------|
+| `Equals` / 省略 | `=` | `findByName` | `WHERE name = ?` |
+| `GreaterThan` | `>` | `findByAgeGreaterThan` | `WHERE age > ?` |
+| `GreaterThanEqual` | `>=` | `findByAgeGreaterThanEqual` | `WHERE age >= ?` |
+| `LessThan` | `<` | `findByAgeLessThan` | `WHERE age < ?` |
+| `LessThanEqual` | `<=` | `findByAgeLessThanEqual` | `WHERE age <= ?` |
+| `Between` | `BETWEEN` | `findByAgeBetween` | `WHERE age BETWEEN ? AND ?` |
+| `In` | `IN` | `findByIdIn` | `WHERE id IN (?, ?, ?)` |
+| `NotIn` | `NOT IN` | `findByIdNotIn` | `WHERE id NOT IN (?, ?, ?)` |
+| `IsNull` | `IS NULL` | `findByNameIsNull` | `WHERE name IS NULL` |
+| `IsNotNull` | `IS NOT NULL` | `findByNameIsNotNull` | `WHERE name IS NOT NULL` |
+| `Like` | `LIKE` | `findByNameLike` | `WHERE name LIKE ?`（需自己加 `%`） |
+| `NotLike` | `NOT LIKE` | `findByNameNotLike` | `WHERE name NOT LIKE ?` |
+| `StartingWith` | `LIKE 'xxx%'` | `findByNameStartingWith` | `WHERE name LIKE ?%`（自动加 `%`） |
+| `EndingWith` | `LIKE '%xxx'` | `findByNameEndingWith` | `WHERE name LIKE %?`（自动加 `%`） |
+| `Containing` | `LIKE '%xxx%'` | `findByNameContaining` | `WHERE name LIKE %?%`（自动加 `%`） |
+| `Not` / `IsNot` | `<>` | `findByNameNot` | `WHERE name <> ?` |
+| `True` | `= true` | `findByActiveTrue` | `WHERE active = true` |
+| `False` | `= false` | `findByActiveFalse` | `WHERE active = false` |
+
+**排序和分页：**
+
+| 关键字 | 作用 | 示例 | 生成的 SQL |
+|-------|------|------|-----------|
+| `OrderBy` | 排序 | `findByUserIdOrderByCreateTimeDesc` | `ORDER BY create_time DESC` |
+| `Asc` | 升序 | `OrderByNameAsc` | `ORDER BY name ASC` |
+| `Desc` | 降序 | `OrderByNameDesc` | `ORDER BY name DESC` |
+
+> **分页**：方法参数加 `Pageable pageable`，返回 `Page<T>`
+
+#### 3.4 项目中的实际应用
+
+本项目 `NotebookRepository` 中的三个自定义方法：
+
+```java
+public interface NotebookRepository extends JpaRepository<Notebook, Long> {
+    
+    // findBy → 查询列表
+    List<Notebook> findByUserId(Long userId);
+    // SQL: SELECT * FROM notebook WHERE user_id = ?
+    
+    // findBy + And → 精确匹配两个条件，返回 Optional（可能为空）
+    Optional<Notebook> findByIdAndUserId(Long id, Long userId);
+    // SQL: SELECT * FROM notebook WHERE id = ? AND user_id = ?
+    // 用途：修改/查看详情前校验归属（防越权）
+    
+    // existsBy + And → 判断是否存在，返回布尔值（性能更好，不查具体数据）
+    Boolean existsByIdAndUserId(Long id, Long userId);
+    // SQL: SELECT COUNT(*) FROM notebook WHERE id = ? AND user_id = ?
+    // 用途：删除前快速判断是否存在且属于自己
+}
+```
+
+#### 3.5 完整示例
+
+```java
+public interface UserRepository extends JpaRepository<User, Long> {
+    
+    // 基础查询
+    Optional<User> findByEmail(String email);
+    List<User> findByStatus(String status);
+    
+    // 多条件 And / Or
+    Optional<User> findByNameAndAge(String name, Integer age);
+    List<User> findByNameOrEmail(String name, String email);
+    
+    // 比较
+    List<User> findByAgeGreaterThan(Integer age);
+    List<User> findByAgeBetween(Integer min, Integer max);
+    
+    // 模糊查询
+    List<User> findByNameContaining(String keyword);     // %keyword%
+    List<User> findByNameStartingWith(String prefix);    // prefix%
+    
+    // Null 判断
+    List<User> findByEmailIsNull();
+    
+    // In 查询
+    List<User> findByIdIn(List<Long> ids);
+    
+    // 统计
+    long countByStatus(String status);
+    
+    // 判断存在
+    boolean existsByEmail(String email);
+    
+    // 排序
+    List<User> findByStatusOrderByCreateTimeDesc(String status);
+    
+    // 分页（参数传入 Pageable）
+    Page<User> findByStatus(String status, Pageable pageable);
+    
+    // 查第一条
+    User findFirstByStatusOrderByCreateTimeDesc(String status);
+    
+    // 删除
+    void deleteByStatus(String status);
+    long deleteByCreateTimeBefore(LocalDateTime time);
+}
+```
+
+#### 3.6 与 Optional 的配合使用
+
+`findByXxx` 返回 `Optional<T>` 时，需要"拆包"才能拿到实体：
+
+```java
+// ✅ 正确：.orElseThrow() 拆开 Optional，拿到 Notebook
+Notebook notebook = notebookRepository
+        .findByIdAndUserId(notebookId, currentUser.getId())
+        .orElseThrow(() -> new RuntimeException("笔记本不存在或无权限"));
+
+// 拆包后 notebook 的类型是 Notebook，可以直接操作
+notebook.setName("新名称");
+notebookRepository.save(notebook);
+```
+
+| 方法 | 作用 | 空值时的行为 |
+|-----|------|-----------|
+| `.get()` | 取出值 | 抛 `NoSuchElementException`（不安全，不推荐） |
+| `.orElse(defaultValue)` | 取出值，或使用默认值 | 返回默认值 |
+| `.orElseGet(() -> ...)` | 取出值，或延迟计算默认值 | 执行 Lambda 返回默认值 |
+| `.orElseThrow(() -> ...)` | 取出值，或抛自定义异常 | 抛出自定义异常 |
+
+#### 3.7 注意事项
+
+1. **属性名必须和实体类字段一致**（区分大小写，按驼峰命名）
+2. **参数顺序必须和方法名中的条件顺序一致**
+3. **太复杂的查询不适合派生方法**，可以用 `@Query` 注解手写 SQL/JPQL
+4. **避免方法名过长**，超过 3-4 个条件建议改用 `@Query`
+5. **`existsBy`** 只判断有无，不查具体数据，**性能更好**，适合删除前校验
+
+---
+
+### 4. 关联关系注解
 
 | 注解 | 关系 | 示例 |
 |-----|------|------|
@@ -1322,6 +1491,160 @@ public class LoginRequest {
 public Result<User> create(@Valid @RequestBody User user) {
     // @Valid 会触发 User 类中所有字段的校验
 }
+```
+
+---
+
+### 6. 数据隔离与权限控制（Day 16）
+
+> **核心目标**：确保每个用户只能看到和操作属于自己的资源。这是从"功能实现"走向"生产安全"的关键一步。
+
+#### 6.1 为什么需要数据隔离？
+
+Day 15 实现了**写入时自动关联用户**，但**读取和修改时没有做权限校验**。
+
+想象一下这个场景：
+
+```
+用户 A 登录后，调用 GET /api/notebooks
+→ 返回的不仅是 A 的笔记本，还有 B、C、D 所有人的！
+
+用户 A 调用 DELETE /api/notebooks/5
+→ 如果 ID=5 是用户 B 的笔记本，A 直接把它删了！
+```
+
+这就像你进了一家银行，柜员把所有客户的存折都拿给你看——显然不行！
+
+#### 6.2 数据隔离的两个层面
+
+| 层面 | 说明 | 示例 |
+|------|------|------|
+| **查询隔离** | 列表接口只返回当前用户的数据 | `SELECT * FROM notebooks WHERE user_id = ?` |
+| **操作隔离** | 修改/删除前先校验资源归属 | 先查出 notebook，判断 user.id 是否匹配 |
+
+#### 6.3 实现策略：SQL 层面过滤
+
+**不要在 Controller 里写一堆 if-else**，而是利用 JPA Repository 的方法名推导，让查询本身就带用户过滤条件：
+
+```java
+// ❌ 旧方式：先查全部，再在内存里过滤（性能差且不安全）
+List<Notebook> all = notebookRepository.findAll();
+List<Notebook> mine = all.stream()
+    .filter(n -> n.getUser().getId().equals(currentUserId))
+    .toList();
+
+// ✅ 新方式：SQL 层面就带上 WHERE 条件（高效且安全）
+List<Notebook> mine = notebookRepository.findByUserId(currentUserId);
+```
+
+#### 6.4 项目中实际应用
+
+**Repository 层扩展**：
+
+```java
+public interface NotebookRepository extends JpaRepository<Notebook, Long> {
+    // 查询隔离：只查当前用户的笔记本
+    List<Notebook> findByUserId(Long userId);
+    
+    // 操作隔离：校验某个笔记本是否属于当前用户
+    Optional<Notebook> findByIdAndUserId(Long id, Long userId);
+    
+    // 删除前快速判断（不需要查出完整实体，性能更好）
+    Boolean existsByIdAndUserId(Long id, Long userId);
+}
+```
+
+**Controller 层改造**：
+
+```java
+// ========== 查询隔离示例 ==========
+@GetMapping
+public Result<List<Notebook>> getAllNotebooks() {
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在"));
+    
+    // 只返回当前用户的笔记本
+    return Result.success(notebookRepository.findByUserId(currentUser.getId()));
+}
+
+// ========== 操作隔离示例（修改） ==========
+@PutMapping("/{id}")
+public Result<Notebook> updateNotebook(@PathVariable Long id,
+                                        @Valid @RequestBody Notebook updatedNotebook) {
+    // 获取当前用户
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在"));
+    
+    // 同时校验：id 存在 AND 属于当前用户
+    Notebook existingNotebook = notebookRepository
+            .findByIdAndUserId(id, currentUser.getId())
+            .orElseThrow(() -> new RuntimeException("笔记本不存在或无权操作"));
+    
+    existingNotebook.setName(updatedNotebook.getName());
+    existingNotebook.setDescription(updatedNotebook.getDescription());
+    return Result.success(notebookRepository.save(existingNotebook));
+}
+
+// ========== 操作隔离示例（删除） ==========
+@DeleteMapping("/{id}")
+public Result<Void> deleteNotebook(@PathVariable Long id) {
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在"));
+    
+    // 快速判断是否存在且属于自己
+    boolean exists = notebookRepository.existsByIdAndUserId(id, currentUser.getId());
+    if (!exists) {
+        throw new RuntimeException("笔记本不存在或无权删除");
+    }
+    
+    notebookRepository.deleteById(id);
+    return Result.success(null);
+}
+```
+
+#### 6.5 数据隔离的三层防线
+
+```
+          ┌──────────────────────────────────┐
+  第 1 层  │  Repository 层                   │  ← SQL 层面就过滤
+          │  findByUserId / findByIdAndUserId │
+          ├──────────────────────────────────┤
+  第 2 层  │  Service/Controller 层           │  ← 业务层面兜底
+          │  归属不匹配就抛异常               │
+          ├──────────────────────────────────┤
+  第 3 层  │  前端层（可选）                  │  ← 体验优化
+          │  不展示其他用户的 ID 入口          │
+          └──────────────────────────────────┘
+```
+
+#### 6.6 Day 15 vs Day 16 对比
+
+|| Day 15 | Day 16 |
+|--|--------|--------|
+| **目标** | 写入时自动关联用户 | 读写都做权限控制 |
+| **关注点** | 创建资源时设好 owner | 查询/修改/删除时校验 owner |
+| **比喻** | 给文件贴上主人标签 | 进门前检查门牌号 |
+| **SecurityContext 用途** | 获取 username 来 set User | 获取 username 来做 WHERE 条件 |
+
+#### 6.7 常见错误提醒
+
+```java
+// ❌ 错误：先 findAll 再内存过滤
+List<Notebook> all = notebookRepository.findAll();
+return all.stream()
+    .filter(n -> n.getUser().getUsername().equals(username))
+    .toList();
+// 问题：如果数据量大，会把整张表加载到内存！
+
+// ✅ 正确：让数据库层面就过滤
+return notebookRepository.findByUserId(currentUserId);
+// SQL 直接带 WHERE，效率高且安全
 ```
 
 ---
@@ -1401,3 +1724,5 @@ public Result<User> create(@Valid @RequestBody User user) {
 > - 2026-04-08：新增 DTO 与 record 模式知识点
 > - 2026-04-08：注解速查表补充 @EnableWebSecurity 等注解
 > - 2026-04-17：新增 SecurityContextHolder 实际应用（Day 15）：创建资源时自动关联当前用户、完整数据流转图
+> - 2026-04-19：新增 JPA 派生查询方法（Derived Query Methods）完整知识体系：操作前缀、条件关键字、排序分页、Optional 拆包、项目中实际应用
+> - 2026-04-19：新增数据隔离与权限控制（Day 16）：查询隔离与操作隔离、三层防线、SQL 层面过滤策略、项目中实际应用、Day 15 vs Day 16 对比

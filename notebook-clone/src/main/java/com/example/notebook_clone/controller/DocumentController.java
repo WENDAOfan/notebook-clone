@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
@@ -36,19 +37,20 @@ public class DocumentController {
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
 @PostMapping
 public Result<Document> createDocument(@Valid @RequestBody Document document, @RequestParam Long notebookId) {
-    // 1. 查询并设置笔记本
-    Notebook notebook = notebookRepository.findById(notebookId)
-            .orElseThrow(() -> new RuntimeException("笔记本不存在！"));
-    document.setNotebook(notebook);
-    
     // ===== Day 15：自动关联当前登录用户 =====
-    // 2. 从 SecurityContext 获取当前登录用户名
+    // 1. 从 SecurityContext 获取当前登录用户名
     String username = SecurityContextHolder.getContext()
             .getAuthentication().getName();
     
-    // 3. 查询用户实体并设置关联
+    // 2. 查询用户实体并设置关联
     User currentUser = userRepository.findByUsername(username)
             .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+    // 3. 查询并设置笔记本
+    Notebook notebook = notebookRepository.findByIdAndUserId(notebookId,currentUser.getId())
+            .orElseThrow(() -> new RuntimeException("笔记本不存在或无权操作"));
+    document.setNotebook(notebook);
+    
+    
     document.setUser(currentUser);
     // =========================================
     
@@ -59,6 +61,16 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
     // 路径会变成类似 /api/documents/notebook/1 (查询 ID 为 1 的笔记本下的文档)
     @GetMapping("/notebook/{notebookId}")
     public Result<List<Document>> getDocumentsByNotebook(@PathVariable Long notebookId) {
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+         // 2. 校验笔记本归属（门禁！）
+        Notebook notebook = notebookRepository.findByIdAndUserId(notebookId, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权访问"));
+
         // 调用我们刚才在 Repository 里写的魔法方法！
         return Result.success(documentRepository.findByNotebook_Id(notebookId));
     }
@@ -77,16 +89,17 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
 
             // 3. 把提取出来的文字，像之前一样存入数据库
             Document document = new Document();
-            // 第 58 行后面加上：
-            Notebook notebook = notebookRepository.findById(notebookId).orElseThrow(() -> new RuntimeException("笔记本不存在！"));
-            //document.setNotebookId(notebookId);
-            // 把注释掉的 setNotebookId 改成：
-            document.setNotebook(notebook);
-            // ===== Day 15：自动关联当前登录用户 =====
+            //改造后
             String username = SecurityContextHolder.getContext()
                     .getAuthentication().getName();
             User currentUser = userRepository.findByUsername(username)
                     .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+            Notebook notebook = notebookRepository.findByIdAndUserId(notebookId, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权操作"));
+            
+            // // 把注释掉的 setNotebookId 改成：
+            document.setNotebook(notebook);
+            
             document.setUser(currentUser);
             // =========================================
             notebook.getDocuments().add(document); // 同步双向关联
@@ -105,6 +118,18 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
     // 路径例如：/api/documents/1 (代表删除 ID 为 1 的文档)
     @DeleteMapping("/{id}")
     public Result<Void> deleteDocument(@PathVariable Long id) {
+        //获取当前用户
+        String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+        User currentUser = userRepository
+            .findByUsername(username)
+            .orElseThrow(()->new RuntimeException("用户不存在: " + username));
+        // 2. 校验归属
+        Boolean exists = documentRepository.existsByIdAndUserId(id, currentUser.getId());
+        if (!exists) {
+        throw new RuntimeException("文档不存在或无权删除");
+            }
+        // 3. 校验通过，删除
         documentRepository.deleteById(id);
         return Result.success(null);
     }

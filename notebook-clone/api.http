@@ -333,3 +333,72 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhb
 ### Day15-5. 查询笔记本下的文档，验证是否关联了用户
 GET http://localhost:8080/api/documents/notebook/1
 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjQzNDUwNSwiZXhwIjoxNzc2NTIwOTA1fQ.3dvfKIJxwFk5uhT4FF8EKXLAPUusGeDhBGysm3i5bt8
+### ========== Day 16 数据隔离测试 ==========
+
+### 0. 用户 zhangsan 登录获取 Token
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+
+
+### 0b. 用户 lisi 登录获取 Token（用于跨用户测试）
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "wangsi",
+  "password": "123456"
+}
+
+
+
+### 1. 【zhangsan】创建一个笔记本
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjYwMzM4MSwiZXhwIjoxNzc2Njg5NzgxfQ.BtoYNeCgbD0x3fjued3GXgXnJvFf1fJH4M56q6ubXhk
+
+{
+  "name": "zhangsan的私密笔记本",
+  "description": "只有我能看到"
+}
+
+### 2. 【zhangsan】查询笔记本 — 应该能看到刚创建的
+GET http://localhost:8080/api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjYwMzM4MSwiZXhwIjoxNzc2Njg5NzgxfQ.BtoYNeCgbD0x3fjued3GXgXnJvFf1fJH4M56q6ubXhk
+
+### 3. 【wangsi】查询笔记本 — 应该看不到 zhangsan 的！（数据隔离验证 ✅）
+GET http://localhost:8080/api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjgsInVzZXJuYW1lIjoid2FuZ3NpIiwic3ViIjoid2FuZ3NpIiwiaWF0IjoxNzc2NjAzNDkxLCJleHAiOjE3NzY2ODk4OTF9.lYxslGqeboCjf7S3GV3CWfUgRhBUeZWWATl236vdmic
+
+### 4. 【wangsi】尝试删除 zhangsan 的笔记本 — 应该失败！（权限拦截 ✅）
+DELETE http://localhost:8080/api/notebooks/17
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjgsInVzZXJuYW1lIjoid2FuZ3NpIiwic3ViIjoid2FuZ3NpIiwiaWF0IjoxNzc2NjAzNDkxLCJleHAiOjE3NzY2ODk4OTF9.lYxslGqeboCjf7S3GV3CWfUgRhBUeZWWATl236vdmic
+
+### 5. 【wangsi】尝试修改 zhangsan 的笔记本 — 应该失败！（权限拦截 ✅）
+PUT http://localhost:8080/api/notebooks/17
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjgsInVzZXJuYW1lIjoid2FuZ3NpIiwic3ViIjoid2FuZ3NpIiwiaWF0IjoxNzc2NjAzNDkxLCJleHAiOjE3NzY2ODk4OTF9.lYxslGqeboCjf7S3GV3CWfUgRhBUeZWWATl236vdmic
+
+{
+  "name": "被篡改的名字",
+  "description": "恶意修改"
+}
+
+### 6. 【zhangsan】正常修改自己的笔记本 — 应该成功 ✅
+PUT http://localhost:8080/api/notebooks/17
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjYwMzM4MSwiZXhwIjoxNzc2Njg5NzgxfQ.BtoYNeCgbD0x3fjued3GXgXnJvFf1fJH4M56q6ubXhk
+
+{
+  "name": "改名后的笔记本",
+  "description": "合法修改"
+}
+
+### 7. 【zhangsan】正常删除自己的笔记本 — 应该成功 ✅
+DELETE http://localhost:8080/api/notebooks/17
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjYwMzM4MSwiZXhwIjoxNzc2Njg5NzgxfQ.BtoYNeCgbD0x3fjued3GXgXnJvFf1fJH4M56q6ubXhk

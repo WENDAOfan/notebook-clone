@@ -30,7 +30,12 @@ public class NotebookController {
     @GetMapping
     public Result<List<Notebook>> getAllNotebooks() {
         // 直接调用管家的 findAll() 方法，连 SQL 都不用写！
-        return Result.success(notebookRepository.findAll());
+        String username = SecurityContextHolder.getContext()//获取 Security 上下文
+                .getAuthentication().getName();//获取当前认证信息，获取用户名
+        // 2. 查询用户实体
+        User currentUser = userRepository.findByUsername(username)//根据用户名查用户实体
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));        
+        return Result.success(notebookRepository.findByUserId(currentUser.getId()));
     }
 
     // 接口 2：创建一个新笔记本 (POST 请求)
@@ -59,37 +64,41 @@ public class NotebookController {
     @PutMapping("/{id}")
     public Result<Notebook> updateNotebook(@PathVariable Long id, 
                                         @Valid @RequestBody Notebook updatedNotebook) {
-        
         // Day 16 预告：这里还应该检查当前用户是否有权限修改这个笔记本！
-        
-        return notebookRepository.findById(id)
-            .map(existingNotebook -> {
-                existingNotebook.setName(updatedNotebook.getName());
-                existingNotebook.setDescription(updatedNotebook.getDescription());
-                
-                // 防御性编程：确保 user 不被意外覆盖（虽然现在不会）
-                // 如果 updatedNotebook 传了 user，且不为 null 才更新
-                if (updatedNotebook.getUser() != null) {
-                    existingNotebook.setUser(updatedNotebook.getUser());
-                }
-                // 如果前端没传 user（为 null），保持原值不变
-                
-                return Result.success(notebookRepository.save(existingNotebook));
-            })
-            .orElseThrow(() -> new RuntimeException("笔记本不存在"));
+        //获取当前用户
+        String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)//根据用户名查用户实体
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        //查笔记本，同时校验
+        Notebook existingNotebook = notebookRepository
+                .findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权操作"));
+                    
+        // 3. 修改字段
+        existingNotebook.setName(updatedNotebook.getName());
+        existingNotebook.setDescription(updatedNotebook.getDescription());
+
+        return Result.success(notebookRepository.save(existingNotebook));
     }
 
     // 接口 4：把整个笔记本扔进垃圾桶 (DELETE 请求)
     @DeleteMapping("/{id}")
     public Result<Void> deleteNotebook(@PathVariable Long id) {
-        if (notebookRepository.existsById(id)){
-            // 直接让管家根据 ID 删掉它
-            notebookRepository.deleteById(id);
-            return Result.success(null);
-        }else{
-            // 不存在就告诉用户"找不到"
-            return Result.fail("删除失败：没找到 ID 为 \" + id + \" 的笔记本！");
-        }
+        //获取当前用户
+        String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+        User currentUser = userRepository
+            .findByUsername(username)
+            .orElseThrow(()->new RuntimeException("用户不存在: " + username));
+        // 2. 校验归属
+        Boolean exists = notebookRepository.existsByIdAndUserId(id, currentUser.getId());
+        if (!exists) {
+        throw new RuntimeException("笔记本不存在或无权删除");
+            }
+        // 3. 校验通过，删除
+        notebookRepository.deleteById(id);
+        return Result.success(null);
         
     }
 }
