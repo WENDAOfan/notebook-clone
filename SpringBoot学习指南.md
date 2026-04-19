@@ -8,16 +8,41 @@
 
 ## 目录
 
-1. [项目整体结构](#第一步-项目整体结构)
-2. [各文件夹作用详解](#第二步-各文件夹作用详解)
-3. [Java 文件逐个解析](#第三步-java-文件逐个解析)
-4. [核心知识点汇总](#第四步-核心知识点汇总)
-   - [JPA 派生查询方法](#3-jpa-派生查询方法derived-query-methods)
-   - [数据隔离与权限控制（Day 16）](#6-数据隔离与权限控制day-16)
-5. [常用注解速查表](#第五步-常用注解速查表)
+1. [项目整体结构](#toc-step1)
+   - [分层架构图](#toc-arch)
+2. [各文件夹作用详解](#toc-step2)
+3. [Java 文件逐个解析](#toc-step3)
+   - [入口类](#toc-entry)
+   - [Controller 层](#toc-controller)
+   - [Service 层](#toc-service)
+   - [Repository 层](#toc-repository)
+   - [Entity 层](#toc-entity)
+   - [Common 层](#toc-common)
+   - [Filter 层](#toc-filter)
+   - [Config 层](#toc-config)
+4. [核心知识点汇总](#toc-step4)
+   - [1. 什么是依赖注入（DI）？](#toc-di)
+   - [2. 什么是 JPA？](#toc-jpa)
+   - [认证流程详解（Session vs JWT）](#toc-auth-flow)
+   - [什么是 JWT？](#toc-jwt)
+   - [完整认证流程示例](#toc-auth-example)
+   - [BCrypt 密码加密](#toc-bcrypt)
+   - [JWT 认证过滤器机制（核心！）](#toc-jwt-filter)
+   - [SecurityContextHolder 的实际应用（Day 15）](#toc-security-context)
+   - [DTO 与 record 模式](#toc-dto)
+   - [3. JPA 派生查询方法（Derived Query Methods）](#toc-derived-query)
+   - [4. 关联关系注解](#toc-relation)
+   - [5. 校验注解](#toc-validation)
+   - [6. 数据隔离与权限控制（Day 16）](#toc-data-isolation)
+5. [常用注解速查表](#toc-step5)
+   - [类级别注解](#toc-class-annotations)
+   - [方法级别注解](#toc-method-annotations)
+   - [字段/参数注解](#toc-field-annotations)
+6. [附录：HTTP 方法对应操作](#toc-appendix)
 
 ---
 
+<a id="toc-step1"></a>
 ## 第一步：项目整体结构
 
 ```
@@ -54,6 +79,7 @@ notebook-clone/
 └── pom.xml                              ← Maven 依赖配置
 ```
 
+<a id="toc-arch"></a>
 ### 分层架构图
 
 ```
@@ -94,6 +120,7 @@ notebook-clone/
 
 ---
 
+<a id="toc-step2"></a>
 ## 第二步：各文件夹作用详解
 
 ### 📁 1. controller/ - 控制器层
@@ -181,8 +208,10 @@ notebook-clone/
 
 ---
 
+<a id="toc-step3"></a>
 ## 第三步：Java 文件逐个解析
 
+<a id="toc-entry"></a>
 ### 🔹 入口类
 
 #### `NotebookCloneApplication.java`
@@ -200,6 +229,7 @@ public class NotebookCloneApplication {
 
 ---
 
+<a id="toc-controller"></a>
 ### 🔹 Controller 层
 
 #### `NotebookController.java` - 笔记本接口控制器
@@ -410,6 +440,7 @@ public class TestController {
 
 ---
 
+<a id="toc-service"></a>
 ### 🔹 Service 层
 
 #### `AuthService.java` - 登录注册业务
@@ -469,6 +500,7 @@ public class AuthService {
 
 ---
 
+<a id="toc-repository"></a>
 ### 🔹 Repository 层
 
 #### `NotebookRepository.java` - 笔记本数据访问
@@ -512,6 +544,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
 ---
 
+<a id="toc-entity"></a>
 ### 🔹 Entity 层
 
 #### `User.java` - 用户实体
@@ -640,6 +673,7 @@ public class Document {
 
 ---
 
+<a id="toc-common"></a>
 ### 🔹 Common 层
 
 #### `Result.java` - 统一返回结果
@@ -715,6 +749,7 @@ public class GlobalExceptionHandler {
 
 ---
 
+<a id="toc-filter"></a>
 ### 🔹 Filter 层
 
 #### `JwtAuthenticationFilter.java` - JWT 认证过滤器
@@ -789,6 +824,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {  // ← 每�
 
 ---
 
+<a id="toc-config"></a>
 ### 🔹 Config 层
 
 #### `SecurityConfig.java` - 安全配置
@@ -851,8 +887,10 @@ public class SecurityConfig {
 
 ---
 
+<a id="toc-step4"></a>
 ## 第四步：核心知识点汇总
 
+<a id="toc-di"></a>
 ### 1. 什么是依赖注入（DI）？
 
 **传统写法**：
@@ -878,6 +916,7 @@ public UserController(UserRepository userRepository) {
 
 ---
 
+<a id="toc-jpa"></a>
 ### 2. 什么是 JPA？
 
 **JPA**（Java Persistence API）是 Java 的持久化规范，让你用操作对象的方式操作数据库。
@@ -893,6 +932,7 @@ public UserController(UserRepository userRepository) {
 
 ---
 
+<a id="toc-auth-flow"></a>
 ### 认证流程详解（Session vs JWT）
 
 #### 传统 Session 认证（有状态）
@@ -956,6 +996,7 @@ public UserController(UserRepository userRepository) {
 
 ---
 
+<a id="toc-jwt"></a>
 ### 什么是 JWT？
 
 **JWT**（JSON Web Token）是一个包含用户信息的加密字符串，由三部分组成：
@@ -1004,6 +1045,7 @@ HMACSHA256(
 
 ---
 
+<a id="toc-auth-example"></a>
 ### 完整认证流程示例
 
 #### 第一步：注册（密码加密存储）
@@ -1056,6 +1098,7 @@ String username = jwtUtil.getUsernameFromToken(token);  // "zhangsan"
 
 ---
 
+<a id="toc-bcrypt"></a>
 ### BCrypt 密码加密
 
 **为什么不能用明文存储密码？**
@@ -1083,6 +1126,7 @@ boolean match = passwordEncoder.matches("123456", encrypted);
 
 ---
 
+<a id="toc-jwt-filter"></a>
 ### JWT 认证过滤器机制（核心！）
 
 整个 JWT 认证由**三个组件协作完成**，各司其职：
@@ -1163,6 +1207,7 @@ SecurityContextHolder                    SecurityContextHolder
 
 ---
 
+<a id="toc-security-context"></a>
 ### SecurityContextHolder 的实际应用（Day 15）
 
 #### 场景：创建资源时自动关联当前用户
@@ -1246,6 +1291,7 @@ Controller 从 SecurityContextHolder 获取用户名
 
 ---
 
+<a id="toc-dto"></a>
 ### DTO 与 record 模式
 
 **DTO**（Data Transfer Object）是专门用于接收请求或返回响应的数据对象。
@@ -1291,6 +1337,7 @@ public class LoginRequest {
 
 ---
 
+<a id="toc-derived-query"></a>
 ### 3. JPA 派生查询方法（Derived Query Methods）
 
 Spring Data JPA 最强大的特性之一：**只需按规则命名方法，Spring 自动生成对应的 SQL，无需手写实现。**
@@ -1458,6 +1505,7 @@ notebookRepository.save(notebook);
 
 ---
 
+<a id="toc-relation"></a>
 ### 4. 关联关系注解
 
 | 注解 | 关系 | 示例 |
@@ -1474,7 +1522,8 @@ notebookRepository.save(notebook);
 
 ---
 
-### 4. 校验注解
+<a id="toc-validation"></a>
+### 5. 校验注解
 
 | 注解 | 作用 |
 |-----|------|
@@ -1495,6 +1544,7 @@ public Result<User> create(@Valid @RequestBody User user) {
 
 ---
 
+<a id="toc-data-isolation"></a>
 ### 6. 数据隔离与权限控制（Day 16）
 
 > **核心目标**：确保每个用户只能看到和操作属于自己的资源。这是从"功能实现"走向"生产安全"的关键一步。
@@ -1649,8 +1699,10 @@ return notebookRepository.findByUserId(currentUserId);
 
 ---
 
+<a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
+<a id="toc-class-annotations"></a>
 ### 类级别注解
 
 | 注解 | 作用 | 使用位置 |
@@ -1666,6 +1718,7 @@ return notebookRepository.findByUserId(currentUserId);
 | `@EnableWebSecurity` | 启用 Spring Security Web 安全功能 | Config 类 |
 | `@RestControllerAdvice` | 全局异常处理 | ExceptionHandler 类 |
 
+<a id="toc-method-annotations"></a>
 ### 方法级别注解
 
 | 注解 | 作用 | HTTP 方法 |
@@ -1678,6 +1731,7 @@ return notebookRepository.findByUserId(currentUserId);
 | `@ExceptionHandler` | 处理特定异常 | - |
 | `@Bean` | 注册 Spring Bean | Config 方法 |
 
+<a id="toc-field-annotations"></a>
 ### 字段/参数注解
 
 | 注解 | 作用 | 使用位置 |
@@ -1700,6 +1754,8 @@ return notebookRepository.findByUserId(currentUserId);
 
 ---
 
+<a id="toc-appendix"></a>
+<a id="toc-appendix"></a>
 ## 附录：HTTP 方法对应操作
 
 | HTTP 方法 | 操作 | 示例 URL | 作用 |

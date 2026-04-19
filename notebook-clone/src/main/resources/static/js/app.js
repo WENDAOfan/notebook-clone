@@ -3,6 +3,7 @@ let notebooks = [];
 let currentNotebookId = null;
 let currentDocuments = [];
 let currentUser = null;
+let authToken = null;
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -11,9 +12,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ==================== 登录状态管理 ====================
 function checkLoginStatus() {
-    // 从 localStorage 读取用户信息
+    // 从 localStorage 读取登录信息
+    const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) {
+    
+    if (savedToken && savedUser) {
+        authToken = savedToken;
         currentUser = JSON.parse(savedUser);
         showMainApp();
     } else {
@@ -55,22 +59,27 @@ const API_BASE = '';
 
 async function fetchAPI(url, options = {}) {
     try {
-        const defaultHeaders = {
+        const headers = {
             'Content-Type': 'application/json',
         };
         
-        // TODO: Day 13 JWT 改造后，在这里添加 Token
-        // const token = localStorage.getItem('token');
-        // if (token) {
-        //     defaultHeaders['Authorization'] = 'Bearer ' + token;
-        // }
+        // Day 16 JWT：添加 Token 到请求头
+        if (authToken) {
+            headers['Authorization'] = 'Bearer ' + authToken;
+        }
         
         const response = await fetch(`${API_BASE}${url}`, {
-            headers: defaultHeaders,
+            headers: headers,
             ...options,
         });
         
         if (!response.ok) {
+            // 如果返回 401，说明 Token 失效，需要重新登录
+            if (response.status === 401) {
+                showToast('登录已过期，请重新登录', 'error');
+                logout();
+                return;
+            }
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
@@ -113,14 +122,19 @@ async function login() {
     }
     
     try {
-        const user = await loginAPI(username, password);
-        currentUser = user;
+        const response = await loginAPI(username, password);
         
-        // 保存用户信息到 localStorage
-        localStorage.setItem('currentUser', JSON.stringify(user));
+        // Day 16 JWT：保存 Token 和用户信息
+        authToken = response.token;
+        currentUser = {
+            id: response.id,
+            username: response.username,
+            email: response.email
+        };
         
-        // TODO: Day 13 JWT 改造后，保存 Token
-        // localStorage.setItem('token', token);
+        // 保存到 localStorage
+        localStorage.setItem('authToken', authToken);
+        localStorage.setItem('currentUser', JSON.stringify(currentUser));
         
         showToast('登录成功', 'success');
         showMainApp();
@@ -160,14 +174,14 @@ async function register() {
 
 function logout() {
     // 清除登录状态
+    authToken = null;
     currentUser = null;
     currentNotebookId = null;
     currentDocuments = [];
     notebooks = [];
     
+    localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
-    // TODO: Day 13 JWT 改造后，清除 Token
-    // localStorage.removeItem('token');
     
     showToast('已退出登录', 'info');
     showAuthPage();
@@ -236,11 +250,10 @@ async function uploadDocumentFileAPI(file, notebookId) {
     formData.append('file', file);
     
     const headers = {};
-    // TODO: Day 13 JWT 改造后，在这里添加 Token
-    // const token = localStorage.getItem('token');
-    // if (token) {
-    //     headers['Authorization'] = 'Bearer ' + token;
-    // }
+    // Day 16 JWT：添加 Token 到请求头
+    if (authToken) {
+        headers['Authorization'] = 'Bearer ' + authToken;
+    }
     
     const response = await fetch(`${API_BASE}/api/documents/upload?notebookId=${notebookId}`, {
         method: 'POST',
@@ -249,6 +262,11 @@ async function uploadDocumentFileAPI(file, notebookId) {
     });
     
     if (!response.ok) {
+        if (response.status === 401) {
+            showToast('登录已过期，请重新登录', 'error');
+            logout();
+            return;
+        }
         throw new Error(`HTTP error! status: ${response.status}`);
     }
     
