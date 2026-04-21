@@ -497,8 +497,13 @@ async function handleFileUpload(event) {
     const file = event.target.files[0];
     if (!file) return;
     
-    if (!file.name.endsWith('.txt')) {
-        showToast('请选择 .txt 文件', 'error');
+    // 支持多种格式
+    const supportedFormats = ['.txt', '.md', '.docx', '.pdf'];
+    const fileName = file.name.toLowerCase();
+    const isSupported = supportedFormats.some(format => fileName.endsWith(format));
+
+    if (!isSupported) {
+        showToast('请上传 .txt, .md, .docx 或 .pdf 文件', 'error');
         return;
     }
     

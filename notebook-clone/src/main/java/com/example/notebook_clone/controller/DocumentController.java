@@ -2,6 +2,8 @@ package com.example.notebook_clone.controller;
 
 import com.example.notebook_clone.entity.User;
 import com.example.notebook_clone.repository.UserRepository;
+import com.example.notebook_clone.service.DocumentExtractService;
+
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.example.notebook_clone.entity.Document;
@@ -21,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 import jakarta.validation.Valid;
 import com.example.notebook_clone.common.Result;
+
 @RestController
 @RequestMapping("/api/documents") 
 public class DocumentController {
@@ -28,11 +31,14 @@ public class DocumentController {
     private final DocumentRepository documentRepository;
     private final NotebookRepository notebookRepository;
     private final UserRepository userRepository;  // Day 15 新增
+    private final DocumentExtractService extractService;  // Day 16.5 新增
 
-    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository) {
+    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService) {
         this.documentRepository = documentRepository;
         this.notebookRepository = notebookRepository;
-       this.userRepository = userRepository; }
+        this.userRepository = userRepository; 
+        this.extractService = extractService;  // 新增赋值
+    }
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
 @PostMapping
@@ -85,7 +91,9 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
             String fileName = file.getOriginalFilename();
 
             // 2. 🌟 核心魔法：把文件里的内容，按照 UTF-8 编码读取成一段超长的 Java 字符串
-            String extractedText = new String(file.getBytes(), StandardCharsets.UTF_8);
+            //String extractedText = new String(file.getBytes(), StandardCharsets.UTF_8);
+            //交给专业的 Service 去处理
+            String extractedText = extractService.extractText(file);
 
             // 3. 把提取出来的文字，像之前一样存入数据库
             Document document = new Document();

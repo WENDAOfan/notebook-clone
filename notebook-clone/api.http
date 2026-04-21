@@ -402,3 +402,93 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhb
 ### 7. 【zhangsan】正常删除自己的笔记本 — 应该成功 ✅
 DELETE http://localhost:8080/api/notebooks/17
 Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjQsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3NjYwMzM4MSwiZXhwIjoxNzc2Njg5NzgxfQ.BtoYNeCgbD0x3fjued3GXgXnJvFf1fJH4M56q6ubXhk
+### ========== Day 17 阶段联调：完整认证流程测试 ==========
+
+### Step 1: 注册用户A（zhangsan）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+### Step 2: 注册用户B（lisi）
+POST http://localhost:8080/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "lisi",
+  "password": "123456"
+}
+
+### Step 3: zhangsan 登录获取 Token
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "zhangsan",
+  "password": "123456"
+}
+
+
+
+### Step 4: lisi 登录获取 Token
+POST http://localhost:8080/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "lisi",
+  "password": "123456"
+}
+
+
+### Step 5: zhangsan 携带 Token 创建笔记本
+POST http://localhost:8080/api/notebooks
+Content-Type: application/json
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3Njc4MTc2NSwiZXhwIjoxNzc2ODY4MTY1fQ.NBJMXQpFW8E50L4uHzzKh-o9i0gEX4g0P0zXJX3azGA
+
+{
+  "name": "zhangsan的AI学习笔记",
+  "description": "第二阶段联调测试"
+}
+
+### Step 6: zhangsan 查询自己的笔记本列表
+GET http://localhost:8080/api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3Njc4MTc2NSwiZXhwIjoxNzc2ODY4MTY1fQ.NBJMXQpFW8E50L4uHzzKh-o9i0gEX4g0P0zXJX3azGA
+
+### Step 7: zhangsan 上传文档到笔记本
+POST http://localhost:8080/api/documents/upload
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3Njc4MTc2NSwiZXhwIjoxNzc2ODY4MTY1fQ.NBJMXQpFW8E50L4uHzzKh-o9i0gEX4g0P0zXJX3azGA
+
+--WebAppBoundary
+Content-Disposition: form-data; name="notebookId"
+
+1
+--WebAppBoundary
+Content-Disposition: form-data; name="file"; filename="测试文档.txt"
+Content-Type: text/plain
+
+这是Day17联调测试上传的文档内容。
+Spring Boot + JWT + 数据隔离，全部打通！
+--WebAppBoundary--
+
+### Step 8: zhangsan 查询笔记本下的文档
+GET http://localhost:8080/api/documents/notebook/1
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjEsInVzZXJuYW1lIjoiemhhbmdzYW4iLCJzdWIiOiJ6aGFuZ3NhbiIsImlhdCI6MTc3Njc4MTc2NSwiZXhwIjoxNzc2ODY4MTY1fQ.NBJMXQpFW8E50L4uHzzKh-o9i0gEX4g0P0zXJX3azGA
+
+### Step 9: lisi 查询笔记本 — 应该看不到 zhangsan 的（数据隔离 ✅）
+GET http://localhost:8080/api/notebooks
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjIsInVzZXJuYW1lIjoibGlzaSIsInN1YiI6Imxpc2kiLCJpYXQiOjE3NzY3ODE4MTQsImV4cCI6MTc3Njg2ODIxNH0.b_BzBFWZlT9ozkGPboj4PQg09xeqji7Kuz_15CthvP4
+
+### Step 10: lisi 尝试删除 zhangsan 的笔记本 — 应该失败（权限拦截 ✅）
+DELETE http://localhost:8080/api/notebooks/1
+Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJ1c2VySWQiOjIsInVzZXJuYW1lIjoibGlzaSIsInN1YiI6Imxpc2kiLCJpYXQiOjE3NzY3ODE4MTQsImV4cCI6MTc3Njg2ODIxNH0.b_BzBFWZlT9ozkGPboj4PQg09xeqji7Kuz_15CthvP4
+
+### Step 11: 不带 Token 访问接口 — 应该 401（认证拦截 ✅）
+GET http://localhost:8080/api/notebooks
+
+### Step 12: 错误格式 Authorization — 应该 401
+GET http://localhost:8080/api/notebooks
+Authorization: Basic zhangsan:123456
