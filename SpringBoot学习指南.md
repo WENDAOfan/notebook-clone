@@ -34,6 +34,9 @@
    - [4. 关联关系注解](#toc-relation)
    - [5. 校验注解](#toc-validation)
    - [6. 数据隔离与权限控制（Day 16）](#toc-data-isolation)
+   - [7. Spring AI 集成（Day 18/19）](#toc-spring-ai)
+   - [8. ChatClient 调用与 Prompt 工程（Day 19）](#toc-chatclient)
+   - [9. 同步阻塞与异步优化预告](#toc-sync-blocking)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -1699,6 +1702,460 @@ return notebookRepository.findByUserId(currentUserId);
 
 ---
 
+<a id="toc-spring-ai"></a>
+### 7. Spring AI 集成（Day 18/19）
+
+> 将大模型能力接入 Spring Boot 项目，实现 AI 功能。
+> ⚠️ 本节基于项目实际运行环境编写，包含完整的踩坑记录和解决方案。
+
+#### 7.1 为什么要用 Spring AI？
+
+直接调用各厂商的 API，格式不统一、代码混乱：
+- OpenAI 一套接口格式
+- DeepSeek 一套接口格式
+- 智谱 GLM 又是一套格式
+
+**Spring AI 的作用**：提供统一抽象层，一套代码调用所有模型。
+
+```
+你的代码 → ChatClient.prompt().user().call().content()
+                    ↓
+               Spring AI（统一接口）
+                    ↓
+        ┌──────────┬───────────┬─────────┐
+        ↓          ↓           ↓
+     DeepSeek    OpenAI      智谱GLM
+```
+
+**类比**：
+
+| 场景 | 统一框架 | 底层实现 |
+|------|---------|---------|
+| 数据库访问 | JDBC | MySQL、PostgreSQL |
+| 大模型调用 | **Spring AI** | DeepSeek、OpenAI |
+
+---
+
+#### 7.2 ⚠️⚠️⚠️ 版本兼容性（最重要的坑！）
+
+这是 Day 18/19 过程中**踩过的最大的坑**，务必仔细阅读！
+
+##### 问题背景
+
+| 组件 | 教程原始版本 | 项目实际使用版本 | 兼容？ |
+|------|------------|----------------|:------:|
+| Spring Boot | 3.4.2 | 3.4.2 | — |
+| Spring AI | 1.0.0-M6（里程碑）| **1.0.0 GA（正式版）** | ⚠️ API 变了！ |
+
+##### 三次踩坑经历
+
+**❌ 第 1 次：ChatClient Bean 找不到**
+```
+错误: Parameter 0 of constructor required a bean of type 'ChatClient' that could not be found
+原因: application.properties 写在了 target/ 目录而不是 src/main/resources/
+教训: 永远只改 src/ 下的源文件，target/ 是编译产物会被覆盖！
+```
+
+**❌ 第 2 次：Spring AI M6 与 Boot 3.4.2 不兼容**
+```
+错误: 同上（ChatClient 找不到）
+原因: spring-ai-bom 1.0.0-M6 只兼容 Spring Boot 3.3.x
+解决: 尝试升级 BOM 到 1.0.0 GA
+```
+
+**❌ 第 3 次：升级到 1.0.0 后依赖名变了**
+```
+错误: dependencies.dependency.version for spring-ai-openai-spring-boot-starter is missing
+原因: 1.0.0 GA 重命名了所有 starter artifactId！
+解决: 改用新的名字
+```
+
+| 旧名称 (M6) | 新名称 (**1.0.0 GA**) |
+|-------------|---------------------|
+| `spring-ai-openai-spring-boot-starter` | **`spring-ai-starter-model-openai`** |
+| （无） | **`spring-ai-starter-model-deepseek`**（新增原生支持）|
+
+**✅ 第 4 次：终于成功 —— 但 ChatClient 注入方式也变了**
+```
+旧方式(M6):  直接注入 ChatClient
+新方式(GA):  必须注入 ChatClient.Builder，然后 .build()
+```
+
+##### ✅ 最终可用配置（经过验证！）
+
+**pom.xml 关键配置**：
+```xml
+<!-- Spring Boot 保持 3.4.2 -->
+<parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.4.2</version>    <!-- 不降级 -->
+</parent>
+
+<!-- BOM 使用 1.0.0 GA 正式版 -->
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-bom</artifactId>
+            <version>1.0.0</version>    <!-- 不是 M6！-->
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+
+<!-- 依赖使用新名字 -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-starter-model-openai</artifactId>    <!-- 新名字！-->
+</dependency>
+```
+
+**application.properties 配置**：
+```properties
+# DeepSeek API 地址
+spring.ai.openai.base-url=https://api.deepseek.com
+# 你的 API Key
+spring.ai.openai.api-key=sk-你的真实key
+# 模型名称
+spring.ai.openai.chat.options.model=deepseek-chat
+```
+
+> 💡 **1.0.0 GA 已发布到 Maven 中央仓库**，不再需要 milestone 仓库配置。
+
+##### Controller 注入方式（1.0.0 GA 专用写法）
+
+```java
+// ❌ M6 写法（1.0.0 里不行了）
+private final ChatClient chatClient;
+public MyController(ChatClient chatClient) {
+    this.chatClient = chatClient;
+}
+
+// ✅ GA 写法（必须用 Builder）
+private final ChatClient chatClient;
+public MyController(ChatClient.Builder chatClientBuilder) {
+    this.chatClient = chatClientBuilder.build();   // 注意 .build()！
+}
+```
+
+---
+
+#### 7.3 为什么用 `openai-starter` 调用 DeepSeek？
+
+**关键原因：DeepSeek 的 API 设计完全兼容 OpenAI 格式！**
+
+| 对比项 | OpenAI | DeepSeek |
+|--------|--------|---------|
+| 请求路径 | `/v1/chat/completions` | `/v1/chat/completions` ✅ |
+| 请求参数 | `model`, `messages`, `temperature` | 一样 ✅ |
+| 响应格式 | `choices[].message.content` | 一样 ✅ |
+
+**结论**：只需改 `base-url` 和 `api-key`，其他代码完全不用动。
+
+---
+
+#### 7.4 API Key 安全原则
+
+```mermaid
+flowchart LR
+    A["❌ 错误做法"] --> B["把 Key 写死在 Java 代码里"]
+    B --> C["提交到 Git → 全世界都能看到你的 Key"]
+
+    D["✅ 正确做法"] --> E["写在 application.properties 中"]
+    E --> F["文件加入 .gitignore → 不提交到版本控制"]
+
+    G["✅ 最佳实践"] --> H["使用环境变量或密钥管理服务"]
+```
+
+**记住一句话：API Key = 你的银行卡密码，泄露了别人会花你的钱！**
+
+| 原则 | 做法 |
+|------|------|
+| ❌ 禁止 | 硬编码在 Java 代码里 |
+| ✅ 正确 | 写在 `application.properties`，并加入 `.gitignore` |
+| 🔐 最佳 | 生产环境使用环境变量或密钥管理服务 |
+
+---
+
+#### 7.5 Spring Security 放行规则
+
+添加 AI 测试接口后，必须在 `SecurityConfig.java` 中放行 `/test/**` 路径：
+
+```java
+.authorizeHttpRequests(auth -> auth
+    .requestMatchers("/", "/index.html", "/css/**", "/js/**").permitAll()
+    .requestMatchers("/api/auth/**").permitAll()
+    .requestMatchers("/test/**").permitAll()      // ← 新增！放行测试接口
+    .anyRequest().authenticated()
+)
+```
+
+否则访问 `/test/ai` 会返回 **401 未授权**或被重定向到登录页。
+
+---
+
+#### 7.6 启动验证
+
+配置完成后启动项目，成功标志：
+1. 控制台没有红色错误（没有 "ChatClient not found"）
+2. 最终显示 `Started NotebookCloneApplication in x.xxx seconds`
+3. 访问 `GET /test/ai` 返回 AI 回复（约 3~5 秒延迟是正常的）
+
+> 启动时只会初始化 ChatClient，不会立即调用 DeepSeek API。真正的 API 调用在收到 HTTP 请求时才发生。
+
+---
+
+<a id="toc-chatclient"></a>
+### 8. ChatClient 调用与 Prompt 工程（Day 19）
+
+> 核心目标：使用 Spring AI 的 ChatClient 编写第一个 AI 接口，掌握 Prompt 的基本结构（System + User）。
+
+#### 8.1 ChatClient 调用链（必须背诵！）
+
+```
+chatClient
+    .prompt()              // ① 开始构造请求
+    .system("...")         // ② (可选) 设置系统提示——给 AI 定人设
+    .user("...")           // ③ (必填) 设置用户问题
+    .call()                // ④ 同步阻塞调用模型
+    .content();            // ⑤ 提取文本回复
+```
+
+| 方法 | 作用 | 是否必填 | 类比 |
+|------|------|:-------:|------|
+| `.prompt()` | 开始构造对话请求 | ✅ | "我要发消息了" |
+| `.system("...")` | 设定 AI 身份/风格 | ❌ 可选 | "入职培训手册" |
+| `.user("...")` | 用户的具体问题 | ✅ 必填 | "日常工作任务" |
+| `.call()` | 发送并等待回复（**线程阻塞**）| ✅ | "发送！等回信..." |
+| `.content()` | 取出文字回答 | ✅ | "把信的内容给我" |
+
+---
+
+#### 8.2 Prompt 的两种角色
+
+和大模型对话时，消息分为两种角色：
+
+| 角色 | 作用 | 示例 | 是否必填 |
+|------|------|------|:-------:|
+| **System**（系统提示） | 设定 AI 的身份、能力边界、回答风格 | "你是一位技术文档助手，回答简洁" | ❌ 可选 |
+| **User**（用户提示） | 用户的具体问题 | "什么是 RESTful API？" | ✅ 必填 |
+
+```
+┌─────────────────────────────────────────────┐
+│ Prompt（提示词）                            │
+├─────────────────────────────────────────────┤
+│ System: 你是一个资深后端工程师               │ ← 给 AI "定人设"
+├─────────────────────────────────────────────┤
+│ User: 什么是 RESTful API？                  ← 用户的真实问题
+└─────────────────────────────────────────────┘
+                    │
+                    ▼
+              大模型生成回复
+```
+
+##### System Prompt vs User Prompt 对比
+
+|| System Prompt | User Prompt |
+|--|---------------|-------------|
+| **次数** | 通常一次 | 可以多次（多轮对话历史）|
+| **作用** | 给 AI "定规矩"、设定身份 | 用户的具体问题 |
+| **类比** | 入职培训手册 | 日常具体工作任务 |
+| **是否必填** | 否 | 是 |
+
+##### 💡 Prompt 工程实战：同一问题不同人设的效果对比
+
+同样的 `"question": "什么是 Spring Boot？"`，不同的 System Prompt 会得到天差地别的回答：
+
+| System Prompt | 回答风格 | 示例 |
+|--------------|---------|------|
+| `"你是一位大学教授"` | 很长、严谨、有定义有背景有优缺点... | "Spring Boot 是基于 Spring Framework 的开源框架..." |
+| `"你是一位短视频博主"` | 口语化、简短、"兄弟们..." | "兄弟们，Spring Boot 就是个脚手架..." |
+| `"你是一位幽默的程序员诗人"` | 诗歌/段子形式 | "Spring Boot 似春风，自动配置乐无穷..." |
+
+**这就是 Prompt 工程的基础：通过 System Prompt 控制输出风格。**
+
+---
+
+#### 8.3 实际代码示例：TestAiController
+
+##### GET 接口（硬编码提问，用于快速验证连通性）
+
+```java
+@GetMapping("/ai")
+public Result<String> testAi() {
+    String answer = chatClient.prompt()
+            .user("你好，请用一句话介绍你自己")
+            .call()
+            .content();
+    return Result.success(answer);
+}
+```
+
+##### POST 接口（支持自定义问题 + System Prompt）
+
+```java
+@PostMapping("/ai")
+public Result<String> chat(@RequestBody ChatRequest request) {
+    // 参数校验
+    if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
+        return Result.fail("问题不能为空");
+    }
+
+    // 构建 Prompt
+    ChatClient.ChatClientRequestSpec prompt = chatClient.prompt();
+
+    // 如果传了 systemPrompt，就设置 System 角色（可选）
+    if (request.getSystemPrompt() != null && !request.getSystemPrompt().trim().isEmpty()) {
+        prompt.system(request.getSystemPrompt());
+    }
+
+    // 设置 User 问题并发起调用
+    String answer = prompt
+            .user(request.getQuestion())
+            .call()
+            .content();
+
+    return Result.success(answer);
+}
+```
+
+##### 请求 DTO（ChatRequest.java）
+
+```java
+@Data
+public class ChatRequest {
+    private String question;       // 用户的问题（必填）
+    private String systemPrompt;   // 系统提示词（可选）
+}
+```
+
+**调用逻辑流程**：
+```
+用户传了 systemPrompt？
+    ├─ 是 → prompt.system("用户自定义的系统提示")
+    └─ 否 → 不设置 System（模型用默认身份）
+
+prompt.user("用户的具体问题")  ← 必须有
+.call().content()              ← 同步阻塞调用
+```
+
+---
+
+#### 8.4 完整的 api.http 测试用例
+
+```http
+### Day19-1. 基础测试：固定问题（GET 请求）
+GET http://localhost:8080/test/ai
+
+### Day19-2. 自定义问题（不带 System Prompt）
+POST http://localhost:8080/test/ai
+Content-Type: application/json
+
+{
+  "question": "Java 和 Python 有什么区别？用一句话概括"
+}
+
+### Day19-3. 自定义问题 + System Prompt（教授人设）
+POST http://localhost:8080/test/ai
+Content-Type: application/json
+
+{
+  "question": "什么是 RESTful API？",
+  "systemPrompt": "你是一位大学教授，回答要严谨详尽，控制在200字以内"
+}
+
+### Day19-4. 测试空问题（应该返回错误）
+POST http://localhost:8080/test/ai
+Content-Type: application/json
+
+{
+  "question": ""
+}
+
+### Day19-5. 让 AI 写一首诗（诗人人设）
+POST http://localhost:8080/test/ai
+Content-Type: application/json
+
+{
+  "question": "写一首关于编程的短诗，4句话",
+  "systemPrompt": "你是一位幽默的程序员诗人"
+}
+```
+
+---
+
+<a id="toc-sync-blocking"></a>
+### 9. 同步阻塞与异步优化预告
+
+#### 9.1 什么是同步阻塞？
+
+Day 19 使用的是**同步调用**：
+
+```java
+String answer = chatClient.prompt()
+        .user("复杂问题...")
+        .call()      // ← 线程在这里停住，等服务器返回
+        .content();  // ← 等 2~5 秒后才执行到这里
+
+// 这行代码在 .call() 返回前不会执行
+System.out.println("这行会等 AI 回复后才打印");
+```
+
+**执行期间线程的状态变化**：
+
+```
+用户请求 → Tomcat 分配线程 T1 → 执行 Controller → 到达 .call()
+                                                    │
+                                            线程 T1 阻塞（BLOCKED/WAITING）
+                                                    │ 等待 DeepSeek 服务器响应
+                                                    │ 通常 2~5 秒
+                                                    ▼
+                                              收到响应，继续执行 → 返回 JSON
+```
+
+#### 9.2 同步阻塞的优缺点
+
+| 优点 | 缺点 |
+|------|------|
+| 代码简单直观，一行调完 | **线程被占用**，并发能力受限 |
+| 适合快速验证原型 | **用户等待时间长**（浏览器转圈），体验差 |
+| 容易调试（线性执行） | 网络波动会导致接口超时 |
+| 异常处理简单 | 高并发时 Tomcat 线程池耗尽 |
+
+**实测响应时间**：
+
+| 问题类型 | 大约耗时 |
+|---------|---------|
+| 简单问题（自我介绍）| ~1~2 秒 |
+| 中等问题（概念解释）| ~2~4 秒 |
+| 复杂问题（详细分析）| ~3~8 秒 |
+
+#### 9.3 解决方案预告
+
+| 方案 | 对应 Day | 说明 |
+|------|---------|------|
+| **SSE 流式输出** | Day 23 | 像"打字机"一样逐字返回，不用干等 |
+| **@Async 异步处理** | Day 25 | 不紧急的任务（如摘要生成）丢到后台线程池 |
+
+> 当前阶段先理解"同步阻塞"的概念就够了。Day 23 我们会把它改造成流式输出。
+
+---
+
+#### 9.4 Day 19 完成标志自查
+
+- [ ] `TestAiController` 已创建，`ChatClient.Builder` 成功注入并 `.build()`
+- [ ] `GET /test/ai` 能返回固定问题的 AI 回复（验证基本连通性）
+- [ ] `ChatRequest` DTO 已创建（含 question + systemPrompt 字段）
+- [ ] `POST /test/ai` 支持传入动态问题和可选 System Prompt
+- [ ] 测试了"带 System Prompt"和"不带 System Prompt"的效果差异
+- [ ] 测试了空问题返回错误
+- [ ] 观察到接口有明显等待时间（2~5 秒），理解这是同步阻塞特性
+- [ ] `SecurityConfig` 已放行 `/test/**` 路径
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -1782,3 +2239,8 @@ return notebookRepository.findByUserId(currentUserId);
 > - 2026-04-17：新增 SecurityContextHolder 实际应用（Day 15）：创建资源时自动关联当前用户、完整数据流转图
 > - 2026-04-19：新增 JPA 派生查询方法（Derived Query Methods）完整知识体系：操作前缀、条件关键字、排序分页、Optional 拆包、项目中实际应用
 > - 2026-04-19：新增数据隔离与权限控制（Day 16）：查询隔离与操作隔离、三层防线、SQL 层面过滤策略、项目中实际应用、Day 15 vs Day 16 对比
+> - 2026-04-22：新增 Spring AI 集成（Day 18）：Spring AI 统一抽象层、依赖引入方式（仓库+BOM+starter）、DeepSeek 兼容 OpenAI 格式、application.properties 配置、Spring Boot 4.x→3.4.2 版本兼容性踩坑、依赖名称变更、API Key 安全原则
+> - 2026-04-22：大幅更新 Spring AI 集成章节：修正为 1.0.0 GA 正式版配置、记录四次完整踩坑经历（target vs src、M6不兼容Boot 3.4.2、依赖名变更、Builder注入方式变更）、最终可用配置方案
+> - 2026-04-22：新增第 8 章 ChatClient 调用与 Prompt 工程（Day 19）：调用链拆解、System/User 两种角色详解、Prompt 工程实战效果对比、TestAiController 完整代码（GET+POST）、ChatRequest DTO、api.http 测试用例
+> - 2026-04-22：新增第 9 章同步阻塞与异步优化预告：线程状态变化图、优缺点对比表、实测耗时数据、SSE流式/@Async异步方案预告、完成标志自查清单
+> - 2026-04-22：新增 SecurityConfig 放行 /test/** 路径说明

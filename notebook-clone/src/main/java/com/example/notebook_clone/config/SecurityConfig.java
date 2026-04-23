@@ -44,7 +44,7 @@ public class SecurityConfig {
                 .requestMatchers("/", "/index.html", "/css/**", "/js/**").permitAll()
                 // 放行注册和登录接口（无需认证）
                 .requestMatchers("/api/auth/**").permitAll()
-                
+                .requestMatchers("/test/**").permitAll()
                 // 其他所有请求都需要认证
                 .anyRequest().authenticated()
             )
