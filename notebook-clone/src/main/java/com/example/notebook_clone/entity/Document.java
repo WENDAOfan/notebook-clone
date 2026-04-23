@@ -40,7 +40,10 @@ public class Document {
     // 加上这个注解，告诉 MySQL 把这个字段设为 LONGTEXT，可以存 40 亿个字符！
     @Column(columnDefinition = "LONGTEXT")
     private String content;
-
+    // ===== Day 20 新增：AI 生成的文档摘要 =====
+    @Column(columnDefinition = "LONGTEXT")
+    private String summary;
+    // =========================================
     private LocalDateTime createTime;
 
 }

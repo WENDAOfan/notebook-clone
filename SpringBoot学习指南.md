@@ -37,6 +37,7 @@
    - [7. Spring AI 集成（Day 18/19）](#toc-spring-ai)
    - [8. ChatClient 调用与 Prompt 工程（Day 19）](#toc-chatclient)
    - [9. 同步阻塞与异步优化预告](#toc-sync-blocking)
+   - [10. AI 文档摘要自动生成（Day 20）](#toc-ai-summary)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -2156,6 +2157,259 @@ System.out.println("这行会等 AI 回复后才打印");
 
 ---
 
+<a id="toc-ai-summary"></a>
+### 10. AI 文档摘要自动生成（Day 20）
+
+> 核心目标：把 Day 19 的"测试接口"变成真正的业务功能——用户上传文档后，自动调用 AI 生成摘要并存入数据库。
+
+#### 10.1 从"测试接口"到"业务功能"
+
+Day 19 的 `TestAiController` 只是一个**技术验证**，证明我们能调通大模型。Day 20 要把它**嵌入真实业务流程**：
+
+```
+用户上传文件 → 提取文本 → 【调用 AI 生成摘要】→ 保存文档（含摘要）→ 返回结果
+                                    ↑
+                              Day 20 新增这一步
+```
+
+**关键区别**：
+
+| 维度 | Day 19 测试接口 | Day 20 业务功能 |
+|------|----------------|----------------|
+| 目的 | 验证 AI 能调通 | 解决真实业务问题 |
+| 触发方式 | 手动调用 `/test/ai` | 上传文件时**自动触发** |
+| 输出 | 直接返回给前端 | 存入数据库，持久化 |
+| Prompt | 用户随意输入 | 精心设计的 System Prompt |
+
+---
+
+#### 10.2 Prompt 工程三板斧（进阶）
+
+Day 19 初步接触了 System Prompt，Day 20 把它用到**生产级**水准。
+
+##### 10.2.1 三板斧框架
+
+```
+┌─────────────────────────────────────────┐
+│  1. 定角色（System Prompt）              │
+│     "你是一位专业的文档摘要助手"          │
+├─────────────────────────────────────────┤
+│  2. 定规则（输出格式/长度/风格）          │
+│     "用 2~4 句话，控制在 200 字以内"      │
+├─────────────────────────────────────────┤
+│  3. 给约束（禁止事项）                    │
+│     "不要复述原文，用自己的话总结"        │
+└─────────────────────────────────────────┘
+```
+
+##### 10.2.2 Day 20 实际使用的 System Prompt
+
+```java
+.system("""
+    你是一位专业的文档摘要助手。请遵循以下规则：
+    1. 用 2~4 句话概括文档的核心内容
+    2. 回答控制在 200 字以内
+    3. 语言简洁，突出关键信息（主题、核心观点、用途）
+    4. 不要复述原文，用自己的话总结
+    """)
+```
+
+##### 10.2.3 不同 Prompt 风格的效果对比
+
+同样的文档内容，不同的 System Prompt 输出天差地别：
+
+| Prompt 风格 | 输出特点 | 适用场景 |
+|------------|---------|---------|
+| **专业摘要助手**（默认）| 结构化、客观、聚焦核心 | 文档列表展示 ✅ |
+| 大学教授 | 学术化、严谨、术语多 | 论文阅读助手 |
+| 短视频博主 | 口语化、轻松、带梗 | 社交媒体分享 |
+| JSON 结构化 | `{"topic":"","keyPoints":[]}` | 机器处理、后续解析 |
+
+> 💡 **思考**：为什么我们的 NotebookLM Clone 用"专业摘要助手"风格最合适？
+> - 用户打开文档列表时，需要**快速判断内容相关性**
+> - 摘要要**客观、简洁、无偏见**
+> - 200 字以内，一眼看完
+
+---
+
+#### 10.3 上下文窗口保护（内容截断）
+
+大模型有 **Token 上限**（类似"一次最多读多少字"），超长内容需要截断：
+
+```java
+// 如果内容超长，只取前 8000 字
+String truncatedContent = content.length() > 8000
+    ? content.substring(0, 8000) + "\n...（内容已截断）"
+    : content;
+```
+
+**为什么选 8000 字？**
+
+| 语言 | 大约 Token 比例 | 8000 字 ≈ |
+|------|----------------|----------|
+| 中文 | 1 字 ≈ 1~1.5 Token | 8000~12000 Token |
+| 英文 | 1 词 ≈ 1~2 Token | — |
+
+DeepSeek 等常见模型的上下文窗口在 **32K~64K Token**，取 8000 字（约 12K Token）非常安全，同时控制响应时间。
+
+**不截断的风险**：
+- Token 超限 → API 报错或自动截断（不可控）
+- 响应时间剧增 → 用户等待 10 秒以上
+- 费用飙升 → 按 Token 计费，越长越贵
+
+---
+
+#### 10.4 为什么抽成单独的 `AiSummaryService`？
+
+Day 20 没有直接把 AI 调用写在 Controller 里，而是新建了 `AiSummaryService`：
+
+```java
+@Service
+public class AiSummaryService {
+    private final ChatClient chatClient;
+
+    public AiSummaryService(ChatClient.Builder chatClientBuilder) {
+        this.chatClient = chatClientBuilder.build();
+    }
+
+    public String generateSummary(String content) {
+        // 边界判断 + 截断 + Prompt + 调用
+    }
+}
+```
+
+**三层好处**：
+
+| 好处 | 说明 |
+|------|------|
+| **复用** | 文件上传、手动创建、后续重新生成，都调用同一个方法 |
+| **可测试** | 可以单独测试摘要生成功能，不依赖 HTTP 请求 |
+| **可扩展** | Day 25 改成异步时，只需要改这一个类 |
+
+**设计原则**：
+- Controller 负责"接收请求、校验权限、调用 Service、返回结果"
+- Service 负责"具体业务逻辑"（如：怎么生成摘要）
+
+---
+
+#### 10.5 在业务流程中集成 AI 调用
+
+##### 10.5.1 注入 Service
+
+```java
+private final AiSummaryService aiSummaryService;
+
+public DocumentController(/* ... */, AiSummaryService aiSummaryService) {
+    // ...
+    this.aiSummaryService = aiSummaryService;
+}
+```
+
+##### 10.5.2 在 `save()` 之前生成摘要
+
+```java
+// 在 upload 方法中
+document.setTitle(fileName);
+document.setContent(extractedText);
+document.setCreateTime(LocalDateTime.now());
+
+// ===== Day 20 新增：自动生成摘要 =====
+// 注意：这是同步调用，会阻塞 2~5 秒！
+String summary = aiSummaryService.generateSummary(extractedText);
+document.setSummary(summary);
+// =====================================
+
+return Result.success(documentRepository.save(document));
+```
+
+**关键点**：必须在 `save()` 之前设置 `summary`，否则数据库里存的是"无摘要版"。
+
+---
+
+#### 10.6 独立"补生成"接口的设计
+
+除了上传时自动生成，还需要一个**独立接口**，为已有文档补生成/重新生成摘要：
+
+```java
+@PostMapping("/{id}/summary")
+public Result<Document> generateSummary(@PathVariable Long id) {
+    // 1. 获取当前用户
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在"));
+
+    // 2. 查询文档并校验归属（数据隔离！）
+    Document document = documentRepository.findById(id)
+            .orElseThrow(() -> new RuntimeException("文档不存在"));
+    
+    if (!document.getUser().getId().equals(currentUser.getId())) {
+        throw new RuntimeException("无权操作该文档");
+    }
+
+    // 3. 调用 AI 生成摘要
+    String summary = aiSummaryService.generateSummary(document.getContent());
+    document.setSummary(summary);
+
+    // 4. 保存并返回
+    return Result.success(documentRepository.save(document));
+}
+```
+
+**为什么需要这个接口？**
+
+| 场景 | 说明 |
+|------|------|
+| 手动创建文档 | `POST /api/documents` 只存了 content，没有 summary，后续可调用补生成 |
+| 重新生成 | 内容编辑后，可以重新调用生成新的摘要 |
+| 失败补偿 | 上传时 AI 调用失败（网络问题），可以后续补生成 |
+
+---
+
+#### 10.7 同步生成的利弊
+
+Day 20 采用**同步生成**（上传时立即调用 AI，等结果返回再给前端响应）：
+
+| 优点 | 缺点 |
+|------|------|
+| 实现简单，代码线性直观 | 上传接口变慢 2~5 秒 |
+| 数据一致性高（存库即完整） | 高并发时线程池压力大 |
+| 错误处理直接（上传失败 = 摘要失败）| AI 服务挂了，上传也跟着挂 |
+
+**未来优化方向**：Day 25 引入 `@Async` + 任务队列，上传后立即返回，后台慢慢生成摘要。
+
+---
+
+#### 10.8 边界情况处理
+
+```java
+public String generateSummary(String content) {
+    // 内容太短，没必要浪费 API 调用
+    if (content == null || content.trim().length() < 50) {
+        return "内容过短，无需摘要";
+    }
+    // ... 正常生成
+}
+```
+
+**测试边界**：
+- 空内容文档 → 返回 `"内容过短，无需摘要"`
+- 50 字以内的文档 → 同上
+- 8000 字以上的文档 → 自动截断，只取前 8000 字
+
+---
+
+#### 10.9 Day 20 完成标志自查
+
+- [ ] `Document` 实体已添加 `summary` 字段（`LONGTEXT` 类型），数据库表结构已更新
+- [ ] `AiSummaryService` 已创建，含合理的 System Prompt 和内容截断保护
+- [ ] 上传文件后，返回的文档数据包含 AI 生成的 `summary`
+- [ ] `POST /api/documents/{id}/summary` 接口可用，且做了数据权限校验
+- [ ] 测试了"内容过短不生成摘要"的边界情况
+- [ ] 体会了不同 System Prompt 对输出风格的影响
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -2244,3 +2498,4 @@ System.out.println("这行会等 AI 回复后才打印");
 > - 2026-04-22：新增第 8 章 ChatClient 调用与 Prompt 工程（Day 19）：调用链拆解、System/User 两种角色详解、Prompt 工程实战效果对比、TestAiController 完整代码（GET+POST）、ChatRequest DTO、api.http 测试用例
 > - 2026-04-22：新增第 9 章同步阻塞与异步优化预告：线程状态变化图、优缺点对比表、实测耗时数据、SSE流式/@Async异步方案预告、完成标志自查清单
 > - 2026-04-22：新增 SecurityConfig 放行 /test/** 路径说明
+> - 2026-04-23：新增第 10 章 AI 文档摘要自动生成（Day 20）：Prompt 工程三板斧、上下文窗口保护、Service 层封装设计、业务流程集成、独立补生成接口设计、同步生成利弊分析、边界情况处理

@@ -2,6 +2,7 @@ package com.example.notebook_clone.controller;
 
 import com.example.notebook_clone.entity.User;
 import com.example.notebook_clone.repository.UserRepository;
+import com.example.notebook_clone.service.AiSummaryService;
 import com.example.notebook_clone.service.DocumentExtractService;
 
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -32,12 +33,14 @@ public class DocumentController {
     private final NotebookRepository notebookRepository;
     private final UserRepository userRepository;  // Day 15 新增
     private final DocumentExtractService extractService;  // Day 16.5 新增
+    private final AiSummaryService aiSummaryService;  // ← Day 20 新增
 
-    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService) {
+    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService) {
         this.documentRepository = documentRepository;
         this.notebookRepository = notebookRepository;
         this.userRepository = userRepository; 
         this.extractService = extractService;  // 新增赋值
+        this.aiSummaryService = aiSummaryService;
     }
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
@@ -114,7 +117,11 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
             document.setTitle(fileName);
             document.setContent(extractedText); // 把提取出来的几万字塞进去
             document.setCreateTime(LocalDateTime.now());
-
+            // ===== Day 20 新增：自动生成摘要 =====
+            // 注意：这是同步调用，会阻塞 2~5 秒！
+            String summary = aiSummaryService.generateSummary(extractedText);
+            document.setSummary(summary);
+            // =====================================
             return Result.success(documentRepository.save(document));
 
         } catch (IOException e) {
@@ -140,5 +147,31 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
         // 3. 校验通过，删除
         documentRepository.deleteById(id);
         return Result.success(null);
+    }
+    /**
+     * 为已有文档生成/重新生成 AI 摘要
+     */
+    @PostMapping("/{id}/summary")
+    public Result<Document> generateSummary(@PathVariable Long id) {
+        // 1. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+        // 2. 查询文档并校验归属（数据隔离！）
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("文档不存在"));
+        //文档归属校验
+        if (!document.getUser().getId().equals(currentUser.getId())) {
+            throw new RuntimeException("无权操作该文档");
+        }
+
+        // 3. 调用 AI 生成摘要
+        String summary = aiSummaryService.generateSummary(document.getContent());
+        document.setSummary(summary);
+
+        // 4. 保存并返回
+        return Result.success(documentRepository.save(document));
     }
 }
