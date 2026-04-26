@@ -228,6 +228,12 @@ async function deleteNotebookAPI(id) {
 }
 
 // ==================== 文档相关 API ====================
+async function generateSummaryAPI(id) {
+    return fetchAPI(`/api/documents/${id}/summary`, {
+        method: 'POST',
+    });
+}
+
 async function getDocumentsByNotebook(notebookId) {
     return fetchAPI(`/api/documents/notebook/${notebookId}`);
 }
@@ -278,7 +284,12 @@ async function uploadDocumentFileAPI(file, notebookId) {
     
     return result.data;
 }
-
+async function askDocumentAPI(documentId, question) {
+    return fetchAPI(`/api/documents/${documentId}/ask`, {
+        method: 'POST',
+        body: JSON.stringify({ question }),
+    });
+}
 // ==================== UI 渲染 ====================
 function renderNotebookList() {
     const container = document.getElementById('notebookList');
@@ -337,7 +348,32 @@ function renderDocumentList() {
         return;
     }
     
-    container.innerHTML = currentDocuments.map(doc => `
+    container.innerHTML = currentDocuments.map(doc => {
+        const hasSummary = doc.summary && doc.summary !== '内容过短，无需摘要';
+        const isShort = doc.summary === '内容过短，无需摘要';
+        const canGenerate = !hasSummary && !isShort && doc.content && doc.content.length >= 50;
+        
+        let summaryHtml = '';
+        if (hasSummary) {
+            summaryHtml = `
+                <div class="summary-row">
+                    <div class="summary-preview collapsed" id="summary-preview-${doc.id}">
+                        <span class="summary-label">🤖 AI摘要：</span>
+                        <span class="summary-text">${escapeHtml(doc.summary)}</span>
+                    </div>
+                    <div class="summary-actions">
+                        <button class="summary-toggle-btn" onclick="toggleSummaryPreview(${doc.id}, event)">展开</button>
+                        <button class="summary-regen-btn" onclick="regenerateSummary(${doc.id}, event)">🔄 重新生成</button>
+                    </div>
+                </div>
+            `;
+        } else if (isShort) {
+            summaryHtml = '<div class="summary-row"><span class="summary-hint">📝 内容过短，无需摘要</span></div>';
+        } else if (canGenerate) {
+            summaryHtml = `<div class="summary-row"><button class="summary-gen-btn" onclick="generateSummary(${doc.id}, event)">🤖 生成摘要</button></div>`;
+        }
+        
+        return `
         <div class="document-item">
             <span class="document-icon">📄</span>
             <div class="document-info">
@@ -346,13 +382,15 @@ function renderDocumentList() {
                     创建于 ${formatDate(doc.createTime)}
                     ${doc.content ? `· ${formatFileSize(doc.content.length)}` : ''}
                 </div>
+                ${summaryHtml}
             </div>
             <div class="document-actions">
                 <button class="btn btn-secondary btn-small" onclick="viewDocument(${doc.id})">查看</button>
                 <button class="btn btn-danger btn-small" onclick="deleteDocument(${doc.id})">删除</button>
             </div>
         </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 // ==================== 事件处理 ====================
@@ -485,10 +523,69 @@ function viewDocument(id) {
     if (!doc) return;
     
     document.getElementById('viewDocumentTitle').textContent = doc.title;
+    
+    // 摘要区域
+    const summaryBox = document.getElementById('viewDocumentSummary');
+    const summaryText = document.getElementById('viewSummaryText');
+    const regenBtn = document.getElementById('viewSummaryRegenBtn');
+    
+    if (doc.summary && doc.summary !== '内容过短，无需摘要') {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = doc.summary;
+        summaryText.classList.remove('summary-hint');
+        regenBtn.style.display = 'inline-flex';
+        regenBtn.textContent = '🔄 重新生成';
+        regenBtn.onclick = () => regenerateSummary(id);
+    } else if (doc.summary === '内容过短，无需摘要') {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '📝 内容过短，无需摘要';
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'none';
+    } else {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '暂无摘要，点击下方按钮生成';
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'inline-flex';
+        regenBtn.textContent = '🤖 生成摘要';
+        regenBtn.onclick = () => generateSummary(id);
+    }
+    
     document.getElementById('viewDocumentContent').textContent = doc.content || '（无内容）';
+    // 记录当前文档 ID（用于问答）
+    document.getElementById('viewDocumentTitle').dataset.documentId = id;
+
+    // 清空上一次的问答结果
+    document.getElementById('qaInput').value = '';
+    document.getElementById('qaAnswer').style.display = 'none';
+    document.getElementById('qaAnswerText').textContent = '';
     showModal('viewDocumentModal');
 }
-
+async function askDocument() {
+    const input = document.getElementById('qaInput');
+    const question = input.value.trim();
+    
+    if (!question) {
+        showToast('请输入问题', 'error');
+        return;
+    }
+    
+    // 获取当前查看的文档 ID
+    const currentDocId = document.getElementById('viewDocumentTitle').dataset.documentId;
+    if (!currentDocId) return;
+    
+    try {
+        showToast('正在思考...', 'info');
+        const answer = await askDocumentAPI(currentDocId, question);
+        
+        // 显示答案
+        document.getElementById('qaAnswer').style.display = 'block';
+        document.getElementById('qaAnswerText').textContent = answer;
+        input.value = '';
+        showToast('回答已生成', 'success');
+    } catch (error) {
+        showToast('回答失败: ' + error.message, 'error');
+    }
+}
 function triggerFileUpload() {
     document.getElementById('fileInput').click();
 }
@@ -508,13 +605,15 @@ async function handleFileUpload(event) {
     }
     
     try {
-        showToast('正在上传...', 'info');
+        showUploadOverlay();
         await uploadDocumentFileAPI(file, currentNotebookId);
-        showToast('文件上传成功', 'success');
+        hideUploadOverlay();
+        showToast('文件上传成功，AI 摘要已生成', 'success');
         event.target.value = '';
         currentDocuments = await getDocumentsByNotebook(currentNotebookId);
         renderDocumentList();
     } catch (error) {
+        hideUploadOverlay();
         showToast('上传失败: ' + error.message, 'error');
     }
 }
@@ -593,4 +692,69 @@ function formatFileSize(size) {
     if (size < 1024) return size + ' B';
     if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
     return (size / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ==================== 摘要相关功能 ====================
+
+async function generateSummary(documentId, event) {
+    if (event) event.stopPropagation();
+    
+    try {
+        showToast('正在生成摘要...', 'info');
+        await generateSummaryAPI(documentId);
+        showToast('摘要生成成功', 'success');
+        currentDocuments = await getDocumentsByNotebook(currentNotebookId);
+        renderDocumentList();
+    } catch (error) {
+        showToast('摘要生成失败: ' + error.message, 'error');
+    }
+}
+
+async function regenerateSummary(documentId, event) {
+    if (event) event.stopPropagation();
+    
+    if (!confirm('确定要重新生成摘要吗？')) return;
+    
+    await generateSummary(documentId, event);
+}
+
+function toggleSummaryPreview(documentId, event) {
+    if (event) event.stopPropagation();
+    
+    const preview = document.getElementById(`summary-preview-${documentId}`);
+    const btn = event.target;
+    
+    if (preview.classList.contains('collapsed')) {
+        preview.classList.remove('collapsed');
+        btn.textContent = '收起';
+    } else {
+        preview.classList.add('collapsed');
+        btn.textContent = '展开';
+    }
+}
+
+// ==================== 上传进度遮罩 ====================
+
+function showUploadOverlay() {
+    document.getElementById('uploadOverlay').style.display = 'flex';
+    const bar = document.getElementById('progressBar');
+    bar.style.width = '0%';
+    bar.style.transition = 'none';
+    
+    // 强制重绘
+    void bar.offsetWidth;
+    
+    bar.style.transition = 'width 3s ease-out';
+    bar.style.width = '85%';
+}
+
+function hideUploadOverlay() {
+    const bar = document.getElementById('progressBar');
+    bar.style.transition = 'width 0.3s ease-out';
+    bar.style.width = '100%';
+    
+    setTimeout(() => {
+        document.getElementById('uploadOverlay').style.display = 'none';
+        bar.style.width = '0%';
+    }, 400);
 }

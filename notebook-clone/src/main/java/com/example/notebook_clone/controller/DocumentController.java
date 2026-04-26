@@ -2,6 +2,7 @@ package com.example.notebook_clone.controller;
 
 import com.example.notebook_clone.entity.User;
 import com.example.notebook_clone.repository.UserRepository;
+import com.example.notebook_clone.service.AiChatService;
 import com.example.notebook_clone.service.AiSummaryService;
 import com.example.notebook_clone.service.DocumentExtractService;
 
@@ -24,6 +25,8 @@ import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 import jakarta.validation.Valid;
 import com.example.notebook_clone.common.Result;
+import com.example.notebook_clone.dto.AskRequest;
+
 
 @RestController
 @RequestMapping("/api/documents") 
@@ -34,13 +37,14 @@ public class DocumentController {
     private final UserRepository userRepository;  // Day 15 新增
     private final DocumentExtractService extractService;  // Day 16.5 新增
     private final AiSummaryService aiSummaryService;  // ← Day 20 新增
-
-    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService) {
+    private final AiChatService aiChatService;//← Day 21 新增
+    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService,AiChatService aiChatService) {
         this.documentRepository = documentRepository;
         this.notebookRepository = notebookRepository;
         this.userRepository = userRepository; 
         this.extractService = extractService;  // 新增赋值
         this.aiSummaryService = aiSummaryService;
+        this.aiChatService = aiChatService;
     }
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
@@ -174,4 +178,35 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
         // 4. 保存并返回
         return Result.success(documentRepository.save(document));
     }
+    /**
+     * 基于单个文档内容进行智能问答
+     */
+    @PostMapping("/{id}/ask")
+    public Result<String> askDocument(@PathVariable Long id,
+                                   @RequestBody AskRequest request) {
+        // 1. .trim()参数校验过滤纯空格或空字符串
+        if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
+            return Result.fail("问题不能为空");
+        }
+        // 2. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        // 3. 查询文档并校验归属（数据隔离！）
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("文档不存在"));
+
+        if (!document.getUser().getId().equals(currentUser.getId())) {
+            throw new RuntimeException("无权访问该文档");
+        }
+
+        // 4. 调用 AI 基于文档内容回答问题
+        String answer = aiChatService.askBasedOnDocument(
+                document.getContent(),
+                request.getQuestion()
+        );
+        return Result.success(answer);
+    }
+    
 }
