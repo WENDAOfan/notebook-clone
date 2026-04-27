@@ -179,6 +179,9 @@ function logout() {
     currentNotebookId = null;
     currentDocuments = [];
     notebooks = [];
+    // Day 22: 隐藏笔记本问答面板
+    const panel = document.getElementById('notebookQAPanel');
+    if (panel) panel.style.display = 'none';
     
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
@@ -284,8 +287,16 @@ async function uploadDocumentFileAPI(file, notebookId) {
     
     return result.data;
 }
-async function askDocumentAPI(documentId, question) {
+async function askDocumentAPI(documentId, question, useDocumentContext) {
     return fetchAPI(`/api/documents/${documentId}/ask`, {
+        method: 'POST',
+        body: JSON.stringify({ question, useDocumentContext }),
+    });
+}
+
+// Day 22: 笔记本级问答 API
+async function askNotebookAPI(notebookId, question) {
+    return fetchAPI(`/api/notebooks/${notebookId}/ask`, {
         method: 'POST',
         body: JSON.stringify({ question }),
     });
@@ -326,6 +337,12 @@ function renderDocumentList() {
     
     document.getElementById('btnRename').disabled = !currentNotebookId;
     document.getElementById('btnDeleteNotebook').disabled = !currentNotebookId;
+    
+    // Day 22: 更新笔记本问答面板的文档数量
+    const badge = document.getElementById('notebookDocCountBadge');
+    if (badge) {
+        badge.textContent = (currentDocuments?.length || 0) + ' 篇文档';
+    }
     
     if (!currentNotebookId) {
         container.innerHTML = `
@@ -410,6 +427,17 @@ async function selectNotebook(id) {
     try {
         currentDocuments = await getDocumentsByNotebook(id);
         renderDocumentList();
+        
+        // Day 22: 显示笔记本问答面板，默认收起
+        const panel = document.getElementById('notebookQAPanel');
+        const content = document.getElementById('notebookQAContent');
+        const chevron = document.getElementById('notebookQAChevron');
+        if (panel) {
+            panel.style.display = 'block';
+            if (content) content.style.display = 'none';
+            if (chevron) chevron.textContent = '▼';
+        }
+        resetNotebookQA();
     } catch (error) {
         showToast('加载文档失败: ' + error.message, 'error');
     }
@@ -473,6 +501,9 @@ async function deleteCurrentNotebook() {
         await deleteNotebookAPI(currentNotebookId);
         currentNotebookId = null;
         currentDocuments = [];
+        // Day 22: 隐藏笔记本问答面板
+        const panel = document.getElementById('notebookQAPanel');
+        if (panel) panel.style.display = 'none';
         showToast('笔记本删除成功', 'success');
         await loadNotebooks();
         renderDocumentList();
@@ -554,10 +585,13 @@ function viewDocument(id) {
     // 记录当前文档 ID（用于问答）
     document.getElementById('viewDocumentTitle').dataset.documentId = id;
 
+    // 重置问答开关为默认开启
+    document.getElementById('qaContextSwitch').checked = true;
+
     // 清空上一次的问答结果
     document.getElementById('qaInput').value = '';
     document.getElementById('qaAnswer').style.display = 'none';
-    document.getElementById('qaAnswerText').textContent = '';
+    document.getElementById('qaAnswerText').value = '';
     showModal('viewDocumentModal');
 }
 async function askDocument() {
@@ -573,13 +607,67 @@ async function askDocument() {
     const currentDocId = document.getElementById('viewDocumentTitle').dataset.documentId;
     if (!currentDocId) return;
     
+    // 读取开关状态
+    const useDocumentContext = document.getElementById('qaContextSwitch').checked;
+    
     try {
         showToast('正在思考...', 'info');
-        const answer = await askDocumentAPI(currentDocId, question);
+        const answer = await askDocumentAPI(currentDocId, question, useDocumentContext);
         
         // 显示答案
         document.getElementById('qaAnswer').style.display = 'block';
-        document.getElementById('qaAnswerText').textContent = answer;
+        document.getElementById('qaAnswerText').value = answer;
+        input.value = '';
+        showToast('回答已生成', 'success');
+    } catch (error) {
+        showToast('回答失败: ' + error.message, 'error');
+    }
+}
+
+// Day 22: 笔记本级问答交互
+function toggleNotebookQA() {
+    const content = document.getElementById('notebookQAContent');
+    const chevron = document.getElementById('notebookQAChevron');
+    if (!content) return;
+    
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        if (chevron) chevron.textContent = '▲';
+    } else {
+        content.style.display = 'none';
+        if (chevron) chevron.textContent = '▼';
+    }
+}
+
+function resetNotebookQA() {
+    const input = document.getElementById('notebookQAInput');
+    const answer = document.getElementById('notebookQAAnswer');
+    const answerText = document.getElementById('notebookQAAnswerText');
+    if (input) input.value = '';
+    if (answer) answer.style.display = 'none';
+    if (answerText) answerText.value = '';
+}
+
+async function askNotebook() {
+    const input = document.getElementById('notebookQAInput');
+    const question = input.value.trim();
+    
+    if (!question) {
+        showToast('请输入问题', 'error');
+        return;
+    }
+    
+    if (!currentNotebookId) {
+        showToast('请先选择一个笔记本', 'error');
+        return;
+    }
+    
+    try {
+        showToast('正在综合多篇文档思考...', 'info');
+        const answer = await askNotebookAPI(currentNotebookId, question);
+        
+        document.getElementById('notebookQAAnswer').style.display = 'block';
+        document.getElementById('notebookQAAnswerText').value = answer;
         input.value = '';
         showToast('回答已生成', 'success');
     } catch (error) {

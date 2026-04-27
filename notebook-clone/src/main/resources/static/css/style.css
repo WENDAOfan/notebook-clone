@@ -706,6 +706,135 @@ body {
     width: 0%;
 }
 
+/* ==================== 问答区域样式 ==================== */
+
+.document-qa-section {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid #e0e0e0;
+}
+
+/* 开关区域 */
+.qa-switch-area {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.switch-label {
+    font-size: 14px;
+    color: #555;
+}
+
+/* Switch 滑块样式 */
+.switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+}
+
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .3s;
+    border-radius: 24px;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 18px;
+    width: 18px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .3s;
+    border-radius: 50%;
+}
+
+input:checked + .slider {
+    background-color: #667eea;
+}
+
+input:checked + .slider:before {
+    transform: translateX(20px);
+}
+
+/* 问答头部 */
+.qa-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    font-weight: 500;
+    color: #333;
+}
+
+/* 输入区域 */
+.qa-input-area {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+
+.qa-input-area input[type="text"] {
+    flex: 1;
+    padding: 10px 14px;
+    border: 1px solid #d0d0d0;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.qa-input-area input[type="text"]:focus {
+    border-color: #667eea;
+}
+
+/* 回答区域 */
+.qa-answer {
+    background-color: #f8f9fa;
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid #e8e8e8;
+}
+
+.qa-answer-label {
+    font-weight: 600;
+    color: #667eea;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+/* 回答文本框：改大 */
+.qa-answer-text {
+    width: 100%;
+    min-height: 120px;
+    padding: 10px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background-color: #fff;
+    font-size: 14px;
+    line-height: 1.7;
+    color: #333;
+    resize: vertical;
+    outline: none;
+    font-family: inherit;
+}
+
 /* ==================== 响应式设计 ==================== */
 @media (max-width: 768px) {
     .auth-container {
@@ -753,4 +882,163 @@ body {
         width: 100%;
         justify-content: flex-end;
     }
+}
+
+/* ==================== Day 22: 笔记本级问答面板 ==================== */
+
+.notebook-qa-wrapper {
+    padding: 0 24px;
+    margin-bottom: 16px;
+    animation: qaSlideDown 0.3s ease-out;
+}
+
+@keyframes qaSlideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.notebook-qa-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(102, 126, 234, 0.25);
+    overflow: hidden;
+    color: white;
+}
+
+.notebook-qa-topbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    user-select: none;
+}
+
+.notebook-qa-topbar:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+}
+
+.notebook-qa-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+    font-size: 15px;
+}
+
+.notebook-qa-emoji {
+    font-size: 20px;
+}
+
+.notebook-qa-count {
+    font-size: 12px;
+    padding: 2px 10px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    font-weight: 500;
+}
+
+.notebook-qa-chevron {
+    font-size: 14px;
+    opacity: 0.8;
+    transition: transform 0.2s;
+}
+
+.notebook-qa-content {
+    padding: 0 20px 20px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #333;
+}
+
+.notebook-qa-desc {
+    font-size: 13px;
+    color: #6c757d;
+    margin-bottom: 12px;
+    padding-top: 16px;
+}
+
+.notebook-qa-inputbox {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.notebook-qa-inputbox input[type="text"] {
+    flex: 1;
+    padding: 12px 16px;
+    border: 2px solid #e9ecef;
+    border-radius: 10px;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s;
+    background: #fff;
+}
+
+.notebook-qa-inputbox input[type="text"]:focus {
+    border-color: #667eea;
+    box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+}
+
+.notebook-qa-sendbtn {
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border: none;
+    color: white;
+    transition: all 0.2s;
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.notebook-qa-sendbtn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(102, 126, 234, 0.4);
+}
+
+.notebook-qa-answer {
+    background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
+    border: 1px solid #d0d8ff;
+    border-radius: 12px;
+    padding: 16px;
+    animation: qaAnswerFadeIn 0.4s ease-out;
+}
+
+@keyframes qaAnswerFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.notebook-qa-answerlabel {
+    font-weight: 600;
+    color: #667eea;
+    margin-bottom: 10px;
+    font-size: 14px;
+}
+
+.notebook-qa-answertext {
+    width: 100%;
+    min-height: 160px;
+    padding: 12px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    background-color: #fff;
+    font-size: 14px;
+    line-height: 1.8;
+    color: #333;
+    resize: vertical;
+    outline: none;
+    font-family: inherit;
 }

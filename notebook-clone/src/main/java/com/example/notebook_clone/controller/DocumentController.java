@@ -201,10 +201,16 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
             throw new RuntimeException("无权访问该文档");
         }
 
-        // 4. 调用 AI 基于文档内容回答问题
+        // 4. 传递开关状态（如果请求没传，默认为 true）
+        boolean useDocumentContext = request.getUseDocumentContext() != null
+                ? request.getUseDocumentContext()
+                : true;
+
+        // 5. 调用 AI 基于文档内容回答问题
         String answer = aiChatService.askBasedOnDocument(
                 document.getContent(),
-                request.getQuestion()
+                request.getQuestion(),
+                useDocumentContext
         );
         return Result.success(answer);
     }

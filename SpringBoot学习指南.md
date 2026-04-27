@@ -38,6 +38,9 @@
    - [8. ChatClient 调用与 Prompt 工程（Day 19）](#toc-chatclient)
    - [9. 同步阻塞与异步优化预告](#toc-sync-blocking)
    - [10. AI 文档摘要自动生成（Day 20）](#toc-ai-summary)
+   - [11. 基于单个文档的智能问答（Day 21）](#toc-ai-qa)
+   - [12. 前端问答优化：回答框改大 + 智能问答开关（Day 21-5）](#toc-ai-qa-switch)
+   - [13. 笔记本级多文档智能问答（Day 22）](#toc-ai-notebook-qa)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -2410,6 +2413,582 @@ public String generateSummary(String content) {
 
 ---
 
+<a id="toc-ai-qa"></a>
+### 11. 基于单个文档的智能问答（Day 21）
+
+> 核心目标：实现"基于单个文档内容回答问题"的接口。用户上传了一篇 Spring Boot 教程，然后问"Spring Boot 的自动配置原理是什么？"——AI 只基于这篇文档的内容来回答，而不是泛泛而谈。
+
+#### 11.1 什么是上下文拼接（Context Concatenation）
+
+把文档内容作为"背景信息"，和用户问题一起发给大模型：
+
+```
+System: "你是一位知识库问答助手。请严格基于以下文档内容回答问题。"
+
+User: """
+【文档内容】
+（这里放文档的完整/截断内容）
+
+【用户问题】
+Spring Boot 的自动配置原理是什么？
+"""
+```
+
+大模型看到"请严格基于以下文档内容"的指令后，会优先从文档里找答案，而不是调用自己的通用知识。
+
+**这就是 RAG（Retrieval-Augmented Generation，检索增强生成）的最简形式。**
+
+---
+
+#### 11.2 核心设计：System Prompt + 上下文拼接
+
+```java
+public String askBasedOnDocument(String documentContent, String question) {
+    // 内容截断保护（同 Day 20）
+    String context = documentContent.length() > 8000
+        ? documentContent.substring(0, 8000) + "\n...（内容已截断）"
+        : documentContent;
+
+    // 调用 AI
+    String answer = chatClient.prompt()
+        .system("""
+            你是一位知识库问答助手。请严格遵循以下规则：
+            1. 只基于用户提供的【文档内容】回答问题
+            2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
+            3. 回答要简洁，控制在 300 字以内
+            4. 不要添加文档中没有的信息
+            """)
+        .user("""
+            【文档内容】
+            %s
+
+            【用户问题】
+            %s
+            """.formatted(context, question))
+        .call()
+        .content();
+
+    return answer;
+}
+```
+
+**System Prompt 的四条规则设计**：
+
+| 规则 | 作用 |
+|------|------|
+| "只基于文档内容回答" | **核心指令**：限制 AI 只能用文档内容 |
+| "如果文档中没有..." | **诚实指令**：防止 AI 编造答案（hallucination）|
+| "回答简洁，300字以内" | **长度控制**：避免啰嗦 |
+| "不要添加文档中没有的信息" | **安全护栏**：避免用通用知识补充 |
+
+---
+
+#### 11.3 接口设计：`POST /api/documents/{id}/ask`
+
+```java
+@PostMapping("/{id}/ask")
+public Result<String> askDocument(@PathVariable Long id,
+                                   @RequestBody AskRequest request) {
+    // 1. 参数校验
+    if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
+        return Result.fail("问题不能为空");
+    }
+
+    // 2. 获取当前用户
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+    // 3. 查询文档并校验归属（数据隔离！）
+    Document document = documentRepository.findById(id)
+            .orElseThrow(() -> new RuntimeException("文档不存在"));
+
+    if (!document.getUser().getId().equals(currentUser.getId())) {
+        throw new RuntimeException("无权访问该文档");
+    }
+
+    // 4. 调用 AI 基于文档内容回答问题
+    String answer = aiChatService.askBasedOnDocument(
+            document.getContent(),
+            request.getQuestion()
+    );
+
+    return Result.success(answer);
+}
+```
+
+**为什么路径是 `/{id}/ask`？**
+
+| 设计选择 | 说明 |
+|---------|------|
+| `POST /api/documents/{id}/ask` | RESTful 风格，表示"对某个文档执行 ask 操作" |
+| 文档 ID 在路径里 | 明确标识"基于哪篇文档"问答 |
+| 问题在请求体里 | 问题可能很长，放 body 更合适 |
+
+---
+
+#### 11.4 防止 AI Hallucination（幻觉）
+
+**Hallucination**：AI 编造文档中没有的信息。
+
+**防御手段**：
+1. **System Prompt 明确限制**："只基于文档内容回答"
+2. **诚实指令**："如果文档中没有相关信息，明确回答无法找到"
+3. **安全护栏**："不要添加文档中没有的信息"
+
+> 💡 大模型不是 100% 听话的。如果发生幻觉，可以加强 System Prompt 的约束语气，或在 User Prompt 中重复强调"只基于文档内容"。
+
+---
+
+#### 11.5 RAG 的最简形式
+
+Day 21 实现的是 **RAG** 的最基础版本：
+
+| 完整 RAG 流程 | Day 21 实现 |
+|-------------|------------|
+| 1. 文档切分成小块 | ❌ 未实现（整篇文档直接传入）|
+| 2. 向量化存入向量数据库 | ❌ 未实现 |
+| 3. 用户问题向量化 | ❌ 未实现 |
+| 4. 相似度检索找相关块 | ❌ 未实现 |
+| 5. 把相关块拼进 Prompt | ✅ **直接传入整篇文档** |
+| 6. 大模型生成回答 | ✅ 已实现 |
+
+> 为什么 Day 21 不用向量数据库？
+> - 单篇文档通常几千字，直接传入 Token 够用
+> - 向量数据库增加复杂度，Day 28+ 再引入
+> - 先理解"上下文拼接"的核心原理，再优化检索效率
+
+---
+
+#### 11.6 Day 21 完成标志自查
+
+- [ ] `AskRequest` DTO 已创建（含 `question` 字段）
+- [ ] `AiChatService` 已创建，含"只基于文档内容回答"的 System Prompt
+- [ ] `POST /api/documents/{id}/ask` 接口可用，且做了数据权限校验
+- [ ] 前端查看弹窗增加了问答区域，可以输入问题并显示答案
+- [ ] 测试了"文档中有答案"和"文档中无答案"两种情况
+- [ ] 测试了空问题和跨用户访问的边界情况
+
+---
+
+<a id="toc-ai-qa-switch"></a>
+### 12. 前端问答优化：回答框改大 + 智能问答开关（Day 21-5）
+
+> 核心目标：优化前端问答区域的交互体验。1）将回答区域扩大，提升可读性；2）新增一个开关，让用户自主选择是否"基于当前文档内容回答"。
+
+#### 12.1 为什么需要开关
+
+| 场景 | 开关状态 | AI 行为 |
+|------|---------|---------|
+| 用户想查文档里的具体内容 | ✅ 开启 | 只基于文档回答，文档里没有就说"找不到" |
+| 用户想围绕文档主题自由扩展提问 | ❌ 关闭 | 不受文档约束，用通用知识自由回答 |
+
+**举例**：文档内容是《Java 基础教程》
+- 开关开启时问"Java 的封装是什么？" → AI 从文档里找答案
+- 开关关闭时问"Java 和 Python 哪个更好？" → AI 用自己的知识自由对比
+
+---
+
+#### 12.2 后端改造：支持开关切换 Prompt
+
+##### 12.2.1 DTO 新增字段
+
+```java
+@Data
+public class AskRequest {
+    private String question;
+    
+    // 是否基于文档内容回答（可选，默认 true，向后兼容）
+    private Boolean useDocumentContext = true;
+}
+```
+
+> `useDocumentContext` 默认 `true`，保证旧请求（没传这个字段）仍然按"基于文档"工作。
+
+##### 12.2.2 Service 层根据开关选择 Prompt
+
+```java
+public String askBasedOnDocument(String documentContent, String question, 
+                                  boolean useDocumentContext) {
+    // 根据开关选择 System Prompt
+    String systemPrompt = useDocumentContext
+        ? """  // 基于文档
+          你是一位知识库问答助手...
+          """
+        : """  // 自由回答
+          你是一位通用知识问答助手...
+          """;
+
+    // 根据开关构建 User Prompt
+    String userPrompt = useDocumentContext && documentContent != null
+        ? "【文档内容】%s\n\n【用户问题】%s".formatted(documentContent, question)
+        : question;  // 关闭时只传问题，不拼接文档
+
+    return chatClient.prompt()
+        .system(systemPrompt)
+        .user(userPrompt)
+        .call()
+        .content();
+}
+```
+
+**核心设计**：
+- 开关开启 → System Prompt 限制"只基于文档"，User Prompt 拼接文档+问题
+- 开关关闭 → System Prompt 放开限制，User Prompt 只传问题（不拼接文档）
+
+##### 12.2.3 Controller 传递开关状态
+
+```java
+@PostMapping("/{id}/ask")
+public Result<String> askDocument(@PathVariable Long id,
+                                   @RequestBody AskRequest request) {
+    // ... 参数校验、获取用户、校验文档归属 ...
+    
+    // 传递开关状态（如果请求没传，默认为 true）
+    boolean useDocumentContext = request.getUseDocumentContext() != null
+            ? request.getUseDocumentContext()
+            : true;
+
+    String answer = aiChatService.askBasedOnDocument(
+            document.getContent(),
+            request.getQuestion(),
+            useDocumentContext
+    );
+    return Result.success(answer);
+}
+```
+
+---
+
+#### 12.3 前端改造：开关控件 + 回答区域扩大
+
+##### 12.3.1 HTML 结构
+
+```html
+<div class="document-qa-section">
+    <!-- 开关区域 -->
+    <div class="qa-switch-area">
+        <label class="switch">
+            <input type="checkbox" id="qaContextSwitch" checked>
+            <span class="slider round"></span>
+        </label>
+        <span class="switch-label">基于当前文档内容回答</span>
+    </div>
+    
+    <div class="qa-header">
+        <span>💬 智能问答</span>
+    </div>
+    <div class="qa-input-area">
+        <input type="text" id="qaInput" placeholder="输入你的问题..." 
+               onkeypress="if(event.key==='Enter') askDocument()">
+        <button class="btn btn-primary" onclick="askDocument()">提问</button>
+    </div>
+    <!-- 回答区域：改为 textarea，支持显示长文本 -->
+    <div id="qaAnswer" class="qa-answer" style="display: none;">
+        <div class="qa-answer-label">🤖 回答：</div>
+        <textarea id="qaAnswerText" class="qa-answer-text" readonly rows="8"></textarea>
+    </div>
+</div>
+```
+
+##### 12.3.2 JS 传递开关状态
+
+```javascript
+async function askDocumentAPI(documentId, question, useDocumentContext) {
+    return fetchAPI(`/api/documents/${documentId}/ask`, {
+        method: 'POST',
+        body: JSON.stringify({ question, useDocumentContext }),
+    });
+}
+
+async function askDocument() {
+    // ... 获取 question 和 currentDocId ...
+    
+    // 读取开关状态
+    const useDocumentContext = document.getElementById('qaContextSwitch').checked;
+    
+    const answer = await askDocumentAPI(currentDocId, question, useDocumentContext);
+    
+    // textarea 用 .value 赋值
+    document.getElementById('qaAnswerText').value = answer;
+}
+```
+
+---
+
+#### 12.4 开关背后的 Prompt 切换原理
+
+```
+┌─────────────────────────────────────────────────┐
+│  开关开启（基于文档）                              │
+│  ─────────────────────                           │
+│  System: "只基于文档内容回答..."                   │
+│  User: "【文档内容】xxx...【用户问题】yyy..."       │
+│                       ↓                         │
+│              AI 优先从文档找答案                  │
+├─────────────────────────────────────────────────┤
+│  开关关闭（自由回答）                              │
+│  ─────────────────────                           │
+│  System: "基于你的知识库回答..."                   │
+│  User: "yyy..." （只有问题，无文档）               │
+│                       ↓                         │
+│              AI 使用通用知识回答                  │
+└─────────────────────────────────────────────────┘
+```
+
+---
+
+#### 12.5 Day 21-5 完成标志自查
+
+- [ ] `AskRequest` 新增了 `useDocumentContext` 字段（默认 true）
+- [ ] `AiChatService` 能根据开关选择不同的 System Prompt 和 User Prompt
+- [ ] `DocumentController` 把开关状态正确传递给 Service
+- [ ] 前端问答区域增加了开关控件，默认开启
+- [ ] 回答展示区域改为 `<textarea>`，高度足够显示长文本
+- [ ] 开关关闭时，AI 不再受文档约束，可以自由回答通用问题
+- [ ] 样式美化完成，输入框和回答区域大小合适
+
+---
+
+<a id="toc-ai-notebook-qa"></a>
+### 13. 笔记本级多文档智能问答（Day 22）
+
+> 核心目标：实现"基于笔记本内所有文档内容回答问题"的接口。用户在一个笔记本里上传了 3 篇 Spring 相关教程，问"这个笔记本里学过的 Spring 核心概念有哪些？"——AI 需要综合多篇文档的内容来回答。
+
+#### 13.1 从单文档到多文档：核心变化
+
+| 维度 | Day 21（单文档） | Day 22（笔记本级） |
+|------|----------------|-------------------|
+| **接口** | `POST /api/documents/{id}/ask` | `POST /api/notebooks/{id}/ask` |
+| **Service 方法** | `askBasedOnDocument` | `askBasedOnDocuments` |
+| **上下文** | 1 篇文档 | N 篇文档拼接 |
+| **适用问题** | "这篇文档讲了什么？" | "这些文档的共同主题是什么？" |
+| **截断策略** | 单文档截断到 8000 字 | 多文档**累计**截断到 50000 字 |
+
+#### 13.2 多文档上下文拼接策略
+
+把笔记本里的所有文档按顺序拼接，每篇文档标注标题：
+
+```
+System: "你是一位知识库问答助手。请严格基于以下文档内容回答问题。"
+
+User: """
+【文档：Spring Boot 入门.txt】
+Spring Boot 是 Spring 框架的扩展...
+
+【文档：Spring MVC 教程.txt】
+Spring MVC 是一种基于 Java 的 Web 框架...
+
+【文档：Spring Data JPA 指南.txt】
+JPA（Java Persistence API）是...
+
+【用户问题】
+这个笔记本里的 Spring 核心概念有哪些？
+"""
+```
+
+#### 13.3 长文本截断策略（50000 字上限）
+
+现代大模型（DeepSeek、Kimi）已支持 1M+ Token 上下文，Day 22 将上限放宽到 **50000 字符**（约 2-3 万 Token，在 1M 上下文中仅占 2-3%）。
+
+```java
+StringBuilder contextBuilder = new StringBuilder();
+int totalLength = 0;
+final int MAX_LENGTH = 50000;  // 50000 字符 ≈ 2-3 万 Token
+boolean truncated = false;
+
+for (String[] doc : documents) {
+    String title = doc[0];
+    String content = doc[1];
+    
+    String docSection = "\n【文档：" + title + "】\n" + content.trim() + "\n";
+    
+    if (totalLength + docSection.length() > MAX_LENGTH) {
+        // 超限处理：截断当前文档，标记 truncated = true，break
+        int remaining = MAX_LENGTH - totalLength;
+        if (remaining > 100) {
+            contextBuilder.append(docSection.substring(0, remaining))
+                         .append("\n...（内容已截断）");
+        }
+        truncated = true;
+        break;  // 后续文档不再处理
+    } else {
+        contextBuilder.append(docSection);
+        totalLength += docSection.length();
+    }
+}
+```
+
+**为什么还设上限？**
+
+| 原因 | 说明 |
+|------|------|
+| **成本** | 输入 Token 按量计费，100 万字费用很高 |
+| **响应时间** | Token 越多，模型处理时间越长 |
+| **防御性设计** | 防止恶意/误操作上传超大文本 |
+
+> 💡 Day 28 引入向量检索后，将升级为"只拿和用户问题最相关的段落"，彻底摆脱长度限制。
+
+#### 13.4 Service 层：新增 `askBasedOnDocuments`
+
+```java
+@Service
+public class AiChatService {
+    
+    // Day 21 原有方法保留（略）
+    public String askBasedOnDocument(String documentContent, String question, 
+                                      boolean useDocumentContext) { ... }
+    
+    // Day 22 新增：基于多篇文档回答
+    public String askBasedOnDocuments(List<String[]> documents, String question) {
+        if (documents == null || documents.isEmpty()) {
+            return "该笔记本下没有文档，无法回答问题。";
+        }
+        
+        // ... 拼接文档内容（见 13.3 截断逻辑）...
+        String context = contextBuilder.toString();
+        
+        String answer = chatClient.prompt()
+            .system("""
+                你是一位知识库问答助手。请严格遵循以下规则：
+                1. 只基于用户提供的【文档内容】回答问题
+                2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
+                3. 回答要简洁，控制在 300 字以内
+                4. 不要添加文档中没有的信息
+                5. 如果有多篇文档，综合各篇文档的信息进行回答
+                """)
+            .user("""
+                %s
+                
+                【用户问题】
+                %s
+                """.formatted(context, question))
+            .call()
+            .content();
+        
+        return answer;
+    }
+}
+```
+
+**关键点**：
+- 参数用 `List<String[]>` 而非 `List<Document>`：每篇传 `[标题, 内容]`，轻量且语义清晰
+- System Prompt 新增第 5 条规则：`"综合各篇文档的信息进行回答"`，提醒 AI 要跨文档分析
+- 每篇文档标注 `【文档：标题】`，让 AI 知道答案来源
+
+#### 13.5 Controller 层：NotebookController 新增问答接口
+
+```java
+@RestController
+@RequestMapping("/api/notebooks")
+public class NotebookController {
+    
+    private final NotebookRepository notebookRepository;
+    private final UserRepository userRepository;
+    private final DocumentRepository documentRepository;  // Day 22 新增
+    private final AiChatService aiChatService;             // Day 22 新增
+    
+    // 构造器注入（4 个依赖）
+    public NotebookController(NotebookRepository notebookRepository,
+                              UserRepository userRepository,
+                              DocumentRepository documentRepository,
+                              AiChatService aiChatService) {
+        this.notebookRepository = notebookRepository;
+        this.userRepository = userRepository;
+        this.documentRepository = documentRepository;
+        this.aiChatService = aiChatService;
+    }
+    
+    // ... 原有接口（getAllNotebooks、createNotebook 等）...
+    
+    // Day 22 新增：笔记本级智能问答
+    @PostMapping("/{id}/ask")
+    public Result<String> askNotebook(@PathVariable Long id,
+                                      @RequestBody AskRequest request) {
+        // 1. 参数校验
+        if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
+            return Result.fail("问题不能为空");
+        }
+        
+        // 2. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        
+        // 3. 查询笔记本并校验归属（一步完成存在性+权限校验）
+        Notebook notebook = notebookRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权访问"));
+        
+        // 4. 获取该笔记本下的所有文档
+        List<Document> documents = documentRepository.findByNotebook_Id(id);
+        
+        // 5. 构建 [标题, 内容] 列表
+        List<String[]> docList = documents.stream()
+                .map(doc -> new String[]{doc.getTitle(), doc.getContent()})
+                .toList();
+        
+        // 6. 调用 AI 基于多篇文档回答
+        String answer = aiChatService.askBasedOnDocuments(
+                docList,
+                request.getQuestion()
+        );
+        
+        return Result.success(answer);
+    }
+}
+```
+
+**设计要点**：
+- 复用 `AskRequest` DTO（和 Day 21 同一个），前端无改造成本
+- `findByIdAndUserId` 一步完成"存在性 + 归属权"校验
+- `findByNotebook_Id` 利用 JPA 派生查询，自动查某笔记本下所有文档
+
+#### 13.6 前端设计：笔记本级问答面板
+
+在文档列表区域上方，放置一个**可展开/收起的紫色渐变卡片**：
+
+```
+┌─────────────────────────────────────────┐
+│  ✨ AI 笔记本问答              ▼ 3篇文档  │  ← 点击展开
+├─────────────────────────────────────────┤
+│  基于当前笔记本内的所有文档内容综合回答    │
+│  ┌─────────────────────────┐ ┌────────┐ │
+│  │ 这些文档的共同主题是...  │ │ 🚀提问 │ │
+│  └─────────────────────────┘ └────────┘ │
+│  ┌─────────────────────────────────────┐│
+│  │ 🤖 AI 综合回答                       ││
+│  │ 根据这些文档，核心概念包括...        ││
+│  └─────────────────────────────────────┘│
+└─────────────────────────────────────────┘
+```
+
+**交互设计**：
+- 选中笔记本后自动显示面板，默认收起（不占空间）
+- 点击顶部 bar 展开/收起内容区
+- 切换笔记本时自动重置问答状态
+- 删除笔记本或退出登录时隐藏面板
+
+#### 13.7 不同截断策略对比
+
+| 策略 | 优点 | 缺点 | 适用场景 |
+|------|------|------|---------|
+| **全量传入 + 宽松上限**（Day 22） | 充分利用大上下文，答案完整 | 超长文本仍有成本 | 单笔记本几十篇文档以内 |
+| 按文档顺序截断 | 简单、可预期 | 后面的文档永远进不来 | 文档极多且按重要性排序 |
+| 只取相关段落（Day 28） | 精准、省 Token、无上限 | 需要向量检索 | 文档数量多、内容长 |
+
+#### 13.8 Day 22 完成标志自查
+
+- [ ] `AiChatService.askBasedOnDocuments` 已创建，支持多篇文档拼接和按文档顺序截断
+- [ ] `POST /api/notebooks/{id}/ask` 接口可用，且做了数据权限校验
+- [ ] 前端文档列表区域出现笔记本问答面板，可展开/收起
+- [ ] 问答面板显示当前笔记本内文档数量
+- [ ] 测试了"多文档综合问答"和"空笔记本"两种情况
+- [ ] 测试了空问题和跨用户访问的边界情况
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -2499,3 +3078,6 @@ public String generateSummary(String content) {
 > - 2026-04-22：新增第 9 章同步阻塞与异步优化预告：线程状态变化图、优缺点对比表、实测耗时数据、SSE流式/@Async异步方案预告、完成标志自查清单
 > - 2026-04-22：新增 SecurityConfig 放行 /test/** 路径说明
 > - 2026-04-23：新增第 10 章 AI 文档摘要自动生成（Day 20）：Prompt 工程三板斧、上下文窗口保护、Service 层封装设计、业务流程集成、独立补生成接口设计、同步生成利弊分析、边界情况处理
+> - 2026-04-26：新增第 11 章 基于单个文档的智能问答（Day 21）：上下文拼接原理、System Prompt 四条规则设计、RESTful 接口设计、AI Hallucination 防御、RAG 最简形式对比表、完成标志自查清单
+> - 2026-04-26：新增第 12 章 前端问答优化（Day 21-5）：智能问答开关设计、后端 Prompt 动态切换原理、DTO 向后兼容设计、前端开关控件 + textarea 回答区改造、CSS 滑块样式
+> - 2026-04-27：新增第 13 章 笔记本级多文档智能问答（Day 22）：多文档上下文拼接策略、50000 字宽松截断上限、List<String[]> 参数设计、NotebookController 新增 /{id}/ask 接口、前端渐变卡片式问答面板、三种截断策略对比

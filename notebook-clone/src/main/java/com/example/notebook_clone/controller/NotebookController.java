@@ -2,6 +2,9 @@ package com.example.notebook_clone.controller;
 
 import com.example.notebook_clone.entity.Notebook;
 import com.example.notebook_clone.repository.NotebookRepository;
+
+// @Valid 的意思就是："在把请求体转成 Java 对象时，
+// 顺便检查一下字段上的校验注解"。如果校验不通过，Spring 会自动拦截并返回错误。
 import org.springframework.web.bind.annotation.*;
 import org.springframework.security.core.context.SecurityContextHolder;
 import java.time.LocalDateTime;
@@ -10,9 +13,12 @@ import jakarta.validation.Valid;
 import com.example.notebook_clone.common.Result;//返回值统一Result<T>
 import com.example.notebook_clone.entity.User;           // ← 新增
 import com.example.notebook_clone.repository.UserRepository; // ← 新增
+//day22
+import com.example.notebook_clone.dto.AskRequest;
+import com.example.notebook_clone.entity.Document;
+import com.example.notebook_clone.repository.DocumentRepository;
+import com.example.notebook_clone.service.AiChatService;
 
-// @Valid 的意思就是："在把请求体转成 Java 对象时，
-// 顺便检查一下字段上的校验注解"。如果校验不通过，Spring 会自动拦截并返回错误。
 @RestController
 @RequestMapping("/api/notebooks") // 统一给这些接口加个前缀：/api/notebooks
 public class NotebookController {
@@ -20,10 +26,13 @@ public class NotebookController {
     // 把刚才建的“管家”请过来（依赖注入）
     private final NotebookRepository notebookRepository;
     private final UserRepository userRepository;  // ← 新增
-
-    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository) {
+    private final DocumentRepository documentRepository;
+    private final AiChatService aiChatService;
+    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository,DocumentRepository documentRepository,AiChatService aiChatService) {
         this.notebookRepository = notebookRepository;
-        this.userRepository = userRepository; 
+        this.userRepository = userRepository;
+        this.documentRepository = documentRepository; 
+        this.aiChatService = aiChatService;
     }
 
     // 接口 1：查看所有笔记本 (GET 请求)
@@ -101,4 +110,34 @@ public class NotebookController {
         return Result.success(null);
         
     }
+    //接口5：让用户可以对整个笔记本提问
+    @PostMapping("/{id}/ask")
+    public Result<String> askNotebook(@PathVariable Long id,@RequestBody AskRequest request) {
+        // 1. .trim()参数校验过滤纯空格或空字符串
+        if (request.getQuestion() == null || request.getQuestion().trim().isEmpty()) {
+            return Result.fail("问题不能为空");
+        }
+        // 2. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        // 3. 查询笔记本并校验归属（数据隔离！）
+        Notebook notebook = notebookRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权访问"));
+        // 4. 获取该笔记本下的所有文档
+        List<Document> documents = documentRepository.findByNotebook_Id(id);
+        // 5. 构建 [标题, 内容] 列表
+        List<String[]> docList = documents.stream()//将 documents 列表(类型是 List<Document>)转换为流,可以逐个处理每个元素。
+                .map(doc -> new String[]{doc.getTitle(), doc.getContent()})//对流中的每个 Document 对象进行转换
+                .toList();//将流收集为不可变的 List<String[]>。
+        //doc 是 lambda 表达式中的参数,代表流中的每一个 Document 实体对象。.map(doc -> ...): 对流的每个元素执行转换操作
+        // 6. 调用 AI 基于多篇文档回答
+        String answer = aiChatService.askBasedOnDocuments(
+                docList,
+                request.getQuestion()
+        );
+        return Result.success(answer);
+    }
+    
 }

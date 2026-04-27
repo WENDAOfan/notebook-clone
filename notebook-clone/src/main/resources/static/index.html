@@ -108,6 +108,35 @@
                     </div>
                 </div>
                 
+                <!-- Day 22: 笔记本级问答面板 -->
+                <div id="notebookQAPanel" class="notebook-qa-wrapper" style="display: none;">
+                    <div class="notebook-qa-card">
+                        <div class="notebook-qa-topbar" onclick="toggleNotebookQA()">
+                            <div class="notebook-qa-brand">
+                                <span class="notebook-qa-emoji">✨</span>
+                                <span class="notebook-qa-label">AI 笔记本问答</span>
+                                <span class="notebook-qa-count" id="notebookDocCountBadge">0 篇文档</span>
+                            </div>
+                            <span class="notebook-qa-chevron" id="notebookQAChevron">▼</span>
+                        </div>
+                        <div class="notebook-qa-content" id="notebookQAContent">
+                            <p class="notebook-qa-desc">基于当前笔记本内的所有文档内容，综合回答你的问题</p>
+                            <div class="notebook-qa-inputbox">
+                                <input type="text" id="notebookQAInput" 
+                                       placeholder="例如：这些文档的共同主题是什么？对比各篇的核心观点..." 
+                                       onkeypress="if(event.key==='Enter') askNotebook()">
+                                <button class="btn btn-primary notebook-qa-sendbtn" onclick="askNotebook()">
+                                    <span>🚀</span> 提问
+                                </button>
+                            </div>
+                            <div id="notebookQAAnswer" class="notebook-qa-answer" style="display: none;">
+                                <div class="notebook-qa-answerlabel">🤖 AI 综合回答</div>
+                                <textarea id="notebookQAAnswerText" class="notebook-qa-answertext" readonly rows="8"></textarea>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
                 <div id="documentList" class="document-list">
                     <div class="empty-state">
                         <p>请先在左侧选择一个笔记本</p>
@@ -207,9 +236,17 @@
                 </div>
                 <pre id="viewDocumentContent" class="document-content"></pre>
                 <div class="document-qa-section">
+                    <!-- 开关区域 -->
+                    <div class="qa-switch-area">
+                        <label class="switch">
+                            <input type="checkbox" id="qaContextSwitch" checked>
+                            <span class="slider round"></span>
+                        </label>
+                        <span class="switch-label">基于当前文档内容回答</span>
+                    </div>
+                    
                     <div class="qa-header">
                         <span>💬 智能问答</span>
-                        <span class="qa-hint">基于当前文档内容回答</span>
                     </div>
                     <div class="qa-input-area">
                         <input type="text" id="qaInput" placeholder="输入你的问题，例如：这篇文档讲了什么？" 
@@ -218,7 +255,7 @@
                     </div>
                     <div id="qaAnswer" class="qa-answer" style="display: none;">
                         <div class="qa-answer-label">🤖 回答：</div>
-                        <div id="qaAnswerText" class="qa-answer-text"></div>
+                        <textarea id="qaAnswerText" class="qa-answer-text" readonly rows="8"></textarea>
                     </div>
                 </div>
             </div>
