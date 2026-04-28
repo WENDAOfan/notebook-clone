@@ -24,8 +24,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 import jakarta.validation.Valid;
+import reactor.core.publisher.Flux;
+
 import com.example.notebook_clone.common.Result;
 import com.example.notebook_clone.dto.AskRequest;
+import org.springframework.http.MediaType;
 
 
 @RestController
@@ -214,5 +217,35 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
         );
         return Result.success(answer);
     }
-    
+    @GetMapping(value = "/{id}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
+    public Flux<String> askDocumentStream(
+            @PathVariable Long id,
+            @RequestParam String question,
+            @RequestParam(defaultValue = "true") boolean useDocumentContext) {
+        
+        // 1. 参数校验
+        if (question == null || question.trim().isEmpty()) {
+            return Flux.just("问题不能为空");
+        }
+        
+        // 2. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        
+        // 3. 查询文档并校验归属
+        Document document = documentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("文档不存在"));
+        if (!document.getUser().getId().equals(currentUser.getId())) {
+            return Flux.just("无权访问该文档");  // ← 流式要返回 Flux！
+        }
+        
+        // 4. 调用流式 Service 方法
+        return aiChatService.askBasedOnDocumentStream(
+                document.getContent(),
+                question,
+                useDocumentContext
+        );
+    }
 }

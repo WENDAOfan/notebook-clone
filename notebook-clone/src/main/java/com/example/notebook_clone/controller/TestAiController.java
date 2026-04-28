@@ -4,6 +4,8 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.web.bind.annotation.*;
 import com.example.notebook_clone.common.Result;
 import com.example.notebook_clone.dto.ChatRequest;
+import org.springframework.http.MediaType;//是 Spring Framework 中用于处理 HTTP 媒体类型（MIME Type） 的核心类
+import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/test")
@@ -55,5 +57,26 @@ public class TestAiController {
 
         return Result.success(answer);
     }
-
+    @GetMapping(value = "/ai/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
+    public Flux<String> testStream(
+            @RequestParam String question,
+            @RequestParam(required = false) String systemPrompt) {
+        
+        // 1. 参数校验（question 不能为空）
+        if (question == null || question.trim().isEmpty()) {
+            return Flux.just("问题不能为空");
+        }
+        
+        // 2. 构建 Prompt（和同步方法一样）
+        ChatClient.ChatClientRequestSpec prompt = chatClient.prompt();
+        if (systemPrompt != null && !systemPrompt.trim().isEmpty()) {
+            prompt.system(systemPrompt);
+        }
+        
+        // 3. 流式调用（区别只有最后一句！）
+        return prompt
+                .user(question)
+                .stream()      // ← 填什么？
+                .content();
+    }
 }

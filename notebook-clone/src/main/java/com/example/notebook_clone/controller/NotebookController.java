@@ -10,6 +10,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import java.time.LocalDateTime;
 import java.util.List;
 import jakarta.validation.Valid;
+import reactor.core.publisher.Flux;
+
 import com.example.notebook_clone.common.Result;//返回值统一Result<T>
 import com.example.notebook_clone.entity.User;           // ← 新增
 import com.example.notebook_clone.repository.UserRepository; // ← 新增
@@ -18,6 +20,7 @@ import com.example.notebook_clone.dto.AskRequest;
 import com.example.notebook_clone.entity.Document;
 import com.example.notebook_clone.repository.DocumentRepository;
 import com.example.notebook_clone.service.AiChatService;
+import org.springframework.http.MediaType;
 
 @RestController
 @RequestMapping("/api/notebooks") // 统一给这些接口加个前缀：/api/notebooks
@@ -139,5 +142,37 @@ public class NotebookController {
         );
         return Result.success(answer);
     }
-    
+    @GetMapping(value = "/{id}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE + ";charset=UTF-8")
+    public Flux<String> askNotebookStream(
+            @PathVariable Long id,
+            @RequestParam String question) {
+        
+        // 1. question 空校验
+        if (question == null || question.trim().isEmpty()) {
+            return Flux.just("问题不能为空");
+        }
+        
+        // 2. 获取当前用户（copy 同步方法的 121-124 行）
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+        // 3. 查询笔记本并校验归属（copy 同步方法的 126-127 行）
+        Notebook notebook = notebookRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权访问"));
+        //多判一次不会出错，只是多写了一行
+        if (!notebook.getUser().getId().equals(currentUser.getId())) {
+            return Flux.just("无权访问该文档");  // ← 流式要返回 Flux！
+        }
+        // 4. 获取该笔记本下的所有文档，转成 List<String[]>（copy 同步方法的 129-133 行）
+        List<Document> documents = documentRepository.findByNotebook_Id(id);
+        List<String[]> docList = documents.stream()//将 documents 列表(类型是 List<Document>)转换为流,可以逐个处理每个元素。
+                .map(doc -> new String[]{doc.getTitle(), doc.getContent()})//对流中的每个 Document 对象进行转换
+                .toList();//将流收集为不可变的 List<String[]>。
+        // 5. 调用 aiChatService.askBasedOnDocumentsStream(docList, question)
+        return aiChatService.askBasedOnDocumentsStream(
+                docList,
+                question
+        );
+    }
 }

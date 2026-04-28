@@ -41,6 +41,7 @@
    - [11. 基于单个文档的智能问答（Day 21）](#toc-ai-qa)
    - [12. 前端问答优化：回答框改大 + 智能问答开关（Day 21-5）](#toc-ai-qa-switch)
    - [13. 笔记本级多文档智能问答（Day 22）](#toc-ai-notebook-qa)
+   - [14. AI 流式输出 SSE 打字机效果（Day 23）](#toc-ai-sse-streaming)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -2989,6 +2990,275 @@ public class NotebookController {
 
 ---
 
+<a id="toc-ai-sse-streaming"></a>
+### 14. AI 流式输出 SSE 打字机效果（Day 23）
+
+> 核心目标：将现有的同步阻塞式 AI 问答改为 SSE 流式输出，实现"打字机"效果——AI 每生成一个 token 就立刻推送给用户，像 ChatGPT 那样逐字显示。
+
+#### 14.1 SSE vs WebSocket 认知
+
+| 特性 | **SSE**（本项目选用） | WebSocket |
+|:---|:---|:---|
+| 通信方向 | **单向**：服务器 → 客户端 | **双向**：服务器 ↔ 客户端 |
+| 协议基础 | **标准 HTTP** | `ws://` / `wss://`，需 Upgrade 握手 |
+| 断线重连 | 浏览器原生自动重连 | 需自己实现心跳和重连 |
+| 复杂度 | 轻量、简单 | 更重、心智负担高 |
+| 典型场景 | AI 流式输出、股票行情、进度条 | 聊天室、协作编辑、在线游戏 |
+
+**为什么选 SSE？** AI 问答是"问完就等回答"的单向场景，不需要客户端再回发数据，SSE 够用了。
+
+#### 14.2 `Flux<String>` 响应式基础
+
+- `Flux<T>` 是 Reactor 中的 **0~N 个元素的异步序列**（对比 `List<T>` 是"拉取"，Flux 是"推送"）
+- Spring AI 的 `ChatClient` 提供 `.stream().content()` 直接返回 `Flux<String>`，每个元素是一个 token/chunk
+- Spring MVC 原生支持 `Flux` 作为返回值，框架自动转为 SSE 格式
+
+**同步 vs 流式调用对比**：
+
+```java
+// 同步：阻塞等待完整结果
+String answer = chatClient.prompt()
+        .system(systemPrompt)
+        .user(userPrompt)
+        .call()          // ← 阻塞！等 AI 全部说完
+        .content();
+
+// 流式：逐 token 推送
+Flux<String> stream = chatClient.prompt()
+        .system(systemPrompt)
+        .user(userPrompt)
+        .stream()        // ← 不阻塞！流式输出
+        .content();
+```
+
+#### 14.3 Service 层改造：新增流式方法 + 抽取私有方法
+
+**设计原则**：
+1. **保留原有同步方法不动**（向后兼容）
+2. **抽取 Prompt 构建逻辑为私有方法**（DRY 原则，同步/流式复用）
+3. **新增流式方法**，返回 `Flux<String>`
+4. **空文档返回**从 `return "xxx"` 改为 `return Flux.just("xxx")`
+
+```java
+@Service
+public class AiChatService {
+    
+    private final ChatClient chatClient;
+    
+    public AiChatService(ChatClient.Builder chatClientBuilder) {
+        this.chatClient = chatClientBuilder.build();
+    }
+    
+    // ========== Day 21/22 原有同步方法（保留不动）==========
+    public String askBasedOnDocument(String documentContent, String question, 
+                                      boolean useDocumentContext) { ... }
+    
+    public String askBasedOnDocuments(List<String[]> documents, String question) { ... }
+    
+    // ========== Day 23 新增：私有方法抽取 ==========
+    
+    private String buildSingleDocSystemPrompt(boolean useDocumentContext) {
+        return useDocumentContext
+            ? """你是一位知识库问答助手..."""
+            : """你是一位通用知识问答助手...""";
+    }
+    
+    private String buildSingleDocUserPrompt(String context, String question, 
+                                             boolean useDocumentContext) {
+        return useDocumentContext && context != null
+            ? """【文档内容】\n%s\n\n【用户问题】\n%s""".formatted(context, question)
+            : question;
+    }
+    
+    private String buildMultiDocSystemPrompt() {
+        return """你是一位知识库问答助手...5. 综合各篇文档回答...""";
+    }
+    
+    private String buildMultiDocUserPrompt(String context, String question) {
+        return """【文档内容】\n%s\n【用户问题】\n%s""".formatted(context, question);
+    }
+    
+    // ========== Day 23 新增：单文档流式问答 ==========
+    public Flux<String> askBasedOnDocumentStream(
+            String documentContent, String question, boolean useDocumentContext) {
+        
+        // 空文档判断（流式返回 Flux.just）
+        if ((documentContent == null || documentContent.trim().isEmpty()) 
+                && useDocumentContext) {
+            return Flux.just("文档内容为空，无法回答问题。");
+        }
+        
+        // 截断逻辑（和同步方法一致）
+        String context = documentContent != null && documentContent.length() > 8000
+                ? documentContent.substring(0, 8000) + "\n...（内容已截断）"
+                : documentContent;
+        
+        // 复用私有方法构建 Prompt
+        String systemPrompt = buildSingleDocSystemPrompt(useDocumentContext);
+        String userPrompt = buildSingleDocUserPrompt(context, question, useDocumentContext);
+        
+        return chatClient.prompt()
+                .system(systemPrompt)
+                .user(userPrompt)
+                .stream()      // ← 唯一区别：stream 替代 call
+                .content();
+    }
+    
+    // ========== Day 23 新增：多文档流式问答 ==========
+    public Flux<String> askBasedOnDocumentsStream(
+            List<String[]> documents, String question) {
+        
+        if (documents == null || documents.isEmpty()) {
+            return Flux.just("该笔记本下没有文档，无法回答问题。");
+        }
+        
+        // ... 文档拼接逻辑（和同步方法一致，含 50000 字截断）...
+        String context = contextBuilder.toString();
+        if (context.isEmpty()) {
+            return Flux.just("该笔记本下的文档内容均为空，无法回答问题。");
+        }
+        
+        String systemPrompt = buildMultiDocSystemPrompt();
+        String userPrompt = buildMultiDocUserPrompt(context, question);
+        
+        return chatClient.prompt()
+                .system(systemPrompt)
+                .user(userPrompt)
+                .stream()
+                .content();
+    }
+}
+```
+
+**关键注意点**：
+- 空文档/空内容判断必须 `return Flux.just(...)`，不能 `return String`（类型不匹配）
+- User Prompt 必须传**截断后**的 `context`，不能传原始 `documentContent`
+- 多文档方法末尾别忘了 `if (truncated) { context += "\n...（更多文档内容因长度限制未纳入上下文）"; }`
+
+#### 14.4 Controller 层：新增流式端点
+
+**同步 vs 流式端点的核心差异**：
+
+| 特性 | 同步端点 | 流式端点 |
+|:---|:---|:---|
+| HTTP 方法 | `POST` + `@RequestBody` | `GET` + `@RequestParam` |
+| 返回类型 | `Result<String>` | `Flux<String>` |
+| `produces` | 默认 `application/json` | `MediaType.TEXT_EVENT_STREAM_VALUE` |
+| 为什么 GET？ | | 浏览器 `EventSource` 只支持 GET，方便前端直接调用 |
+
+**三个 Controller 分别新增**：
+
+```java
+// TestAiController.java — 公开测试端点（无需登录）
+@GetMapping(value = "/ai/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<String> testStream(
+        @RequestParam String question,
+        @RequestParam(required = false) String systemPrompt) {
+    
+    if (question == null || question.trim().isEmpty()) {
+        return Flux.just("问题不能为空");
+    }
+    
+    ChatClient.ChatClientRequestSpec prompt = chatClient.prompt();
+    if (systemPrompt != null && !systemPrompt.trim().isEmpty()) {
+        prompt.system(systemPrompt);
+    }
+    
+    return prompt.user(question).stream().content();
+}
+```
+
+```java
+// DocumentController.java — 文档级流式问答（需登录）
+@GetMapping(value = "/{id}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<String> askDocumentStream(
+        @PathVariable Long id,
+        @RequestParam String question,
+        @RequestParam(defaultValue = "true") boolean useDocumentContext) {
+    
+    // 1. question 空校验
+    // 2. 获取当前用户（SecurityContext）
+    // 3. 查文档 + 权限校验（document.getUser().getId().equals(currentUser.getId())）
+    // 4. 调用 aiChatService.askBasedOnDocumentStream(...)
+}
+```
+
+```java
+// NotebookController.java — 笔记本级流式问答（需登录）
+@GetMapping(value = "/{id}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<String> askNotebookStream(
+        @PathVariable Long id,
+        @RequestParam String question) {
+    
+    // 1. question 空校验
+    // 2. 获取当前用户
+    // 3. 查笔记本 + 权限校验
+    // 4. 获取所有文档 → 转成 List<String[]>
+    // 5. 调用 aiChatService.askBasedOnDocumentsStream(...)
+}
+```
+
+> ⚠️ 流式方法**不包 `Result.success()`**，直接返回 `Flux<String>`，Spring 自动转成 SSE 流。
+
+#### 14.5 中文乱码修复
+
+Windows 环境下，Spring Boot 默认可能使用系统编码（GBK），导致 SSE 中文乱码。
+
+在 `application.properties` 末尾添加：
+
+```properties
+# 强制所有 HTTP 请求/响应使用 UTF-8 编码
+server.servlet.encoding.charset=UTF-8
+server.servlet.encoding.enabled=true
+server.servlet.encoding.force=true
+server.servlet.encoding.force-response=true
+```
+
+#### 14.6 测试方式
+
+| 方式 | 命令/操作 | 观察重点 |
+|:---|:---|:---|
+| **curl**（推荐） | `curl -N "http://localhost:8080/test/ai/stream?question=xxx"` | 逐字"蹦"出来 |
+| **浏览器** | 地址栏直接访问 | 观察文字逐段出现 |
+| **api.http** | IntelliJ HTTP Client 发送 GET | 每行显示一个 `data: xxx` |
+
+SSE 响应格式：
+```
+data: Spring
+data: Boot
+data: 是
+data: Spring
+data: 框架
+data: 的
+data: 扩展
+data: ...
+```
+
+#### 14.7 三种截断策略对比（Day 22 vs Day 23 vs Day 28）
+
+| 维度 | Day 21（单文档） | Day 22（多文档同步） | Day 23（多文档流式） |
+|:---|:---|:---|:---|
+| 调用方式 | `.call()` | `.call()` | `.stream()` |
+| 返回类型 | `String` | `String` | `Flux<String>` |
+| 用户体验 | 白屏等待 → 一次性显示 | 白屏等待 → 一次性显示 | **逐字显示打字机效果** |
+| Service 方法 | `askBasedOnDocument` | `askBasedOnDocuments` | `askBasedOnDocumentStream` / `askBasedOnDocumentsStream` |
+| Controller 端点 | `POST /ask` | `POST /ask` | `GET /ask/stream` |
+| 前端适配 | 已完成 | 已完成 | 需改用 `EventSource` |
+
+#### 14.8 Day 23 完成标志自查
+
+- [ ] 能说出 SSE 和 WebSocket 的核心区别（单向 vs 双向）
+- [ ] 理解 `.call().content()` vs `.stream().content()` 的区别
+- [ ] 知道 `Flux<String>` 为什么能实现流式推送（异步序列、框架自动转 SSE）
+- [ ] 了解 `produces = MediaType.TEXT_EVENT_STREAM_VALUE` 的作用
+- [ ] Service 层抽取了 Prompt 构建私有方法，同步/流式复用
+- [ ] 流式方法正确处理空文档返回（`Flux.just(...)`）
+- [ ] 三个 Controller 都新增了流式端点
+- [ ] curl / 浏览器 / api.http 测试确认能看到逐字输出效果
+- [ ] application.properties 已配置 UTF-8 编码防止中文乱码
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -3081,3 +3351,4 @@ public class NotebookController {
 > - 2026-04-26：新增第 11 章 基于单个文档的智能问答（Day 21）：上下文拼接原理、System Prompt 四条规则设计、RESTful 接口设计、AI Hallucination 防御、RAG 最简形式对比表、完成标志自查清单
 > - 2026-04-26：新增第 12 章 前端问答优化（Day 21-5）：智能问答开关设计、后端 Prompt 动态切换原理、DTO 向后兼容设计、前端开关控件 + textarea 回答区改造、CSS 滑块样式
 > - 2026-04-27：新增第 13 章 笔记本级多文档智能问答（Day 22）：多文档上下文拼接策略、50000 字宽松截断上限、List<String[]> 参数设计、NotebookController 新增 /{id}/ask 接口、前端渐变卡片式问答面板、三种截断策略对比
+> - 2026-04-28：新增第 14 章 AI 流式输出 SSE 打字机效果（Day 23）：SSE vs WebSocket 认知、Flux<String> 响应式基础、Service 层抽取私有方法 + 新增流式方法、Controller 层三个流式端点、 produces = TEXT_EVENT_STREAM_VALUE、中文乱码修复、api.http SSE 测试
