@@ -130,8 +130,14 @@
                                 </button>
                             </div>
                             <div id="notebookQAAnswer" class="notebook-qa-answer" style="display: none;">
-                                <div class="notebook-qa-answerlabel">🤖 AI 综合回答</div>
+                                <div class="notebook-qa-answerlabel">
+                                    🤖 AI 综合回答
+                                    <span id="notebookStreamIndicator" class="stream-indicator" style="display: none;">
+                                        <span class="stream-dot"></span> AI 正在输入...
+                                    </span>
+                                </div>
                                 <textarea id="notebookQAAnswerText" class="notebook-qa-answertext" readonly rows="8"></textarea>
+                                <div id="notebookCitations" class="citations-container" style="display: none;"></div>
                             </div>
                         </div>
                     </div>
@@ -254,8 +260,14 @@
                         <button class="btn btn-primary" onclick="askDocument()">提问</button>
                     </div>
                     <div id="qaAnswer" class="qa-answer" style="display: none;">
-                        <div class="qa-answer-label">🤖 回答：</div>
+                        <div class="qa-answer-label">
+                            🤖 回答：
+                            <span id="qaStreamIndicator" class="stream-indicator" style="display: none;">
+                                <span class="stream-dot"></span> AI 正在输入...
+                            </span>
+                        </div>
                         <textarea id="qaAnswerText" class="qa-answer-text" readonly rows="8"></textarea>
+                        <div id="qaCitations" class="citations-container" style="display: none;"></div>
                     </div>
                 </div>
             </div>

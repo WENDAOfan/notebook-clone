@@ -301,6 +301,88 @@ async function askNotebookAPI(notebookId, question) {
         body: JSON.stringify({ question }),
     });
 }
+
+// Day 23-5: SSE 流式请求封装（使用 fetch + ReadableStream，支持自定义 Header）
+async function fetchStream(url, params, onChunk, onError) {
+    const queryString = new URLSearchParams(params).toString();
+    const fullUrl = `${API_BASE}${url}${queryString ? '?' + queryString : ''}`;
+
+    const headers = {};
+    if (authToken) {
+        headers['Authorization'] = 'Bearer ' + authToken;
+    }
+
+    const response = await fetch(fullUrl, { headers });
+
+    if (!response.ok) {
+        throw new Error(`请求失败：${response.status} ${response.statusText}`);
+    }
+
+    if (!response.body) {
+        throw new Error('响应体为空');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let receivedData = false;
+
+    try {
+        while (true) {
+            let done, value;
+            try {
+                ({ done, value } = await reader.read());
+            } catch (readError) {
+                // 如果已经收到过数据，连接关闭视为流正常结束
+                if (receivedData) break;
+                throw readError;
+            }
+            if (done) break;
+            receivedData = true;
+
+            buffer += decoder.decode(value, { stream: true });
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (line.startsWith('data:')) {
+                    const data = line.slice(5).trim();
+                    if (data) {
+                        onChunk(data);
+                    }
+                }
+            }
+        }
+    } finally {
+        reader.releaseLock();
+    }
+
+    // 刷新 decoder 内部缓冲区中残留的数据
+    buffer += decoder.decode();
+
+    if (buffer.startsWith('data:')) {
+        const data = buffer.slice(5).trim();
+        if (data) onChunk(data);
+    }
+}
+
+function askDocumentStreamAPI(documentId, question, useDocumentContext, onChunk) {
+    return fetchStream(
+        `/api/documents/${documentId}/ask/stream`,
+        { question, useDocumentContext },
+        onChunk
+    );
+}
+
+function askNotebookStreamAPI(notebookId, question, onChunk) {
+    return fetchStream(
+        `/api/notebooks/${notebookId}/ask/stream`,
+        { question },
+        onChunk
+    );
+}
+
 // ==================== UI 渲染 ====================
 function renderNotebookList() {
     const container = document.getElementById('notebookList');
@@ -597,30 +679,53 @@ function viewDocument(id) {
 async function askDocument() {
     const input = document.getElementById('qaInput');
     const question = input.value.trim();
-    
+    const currentDocId = document.getElementById('viewDocumentTitle').dataset.documentId;
+    const useDocumentContext = document.getElementById('qaContextSwitch').checked;
+
     if (!question) {
-        showToast('请输入问题', 'error');
+        showToast('请输入问题', 'warning');
         return;
     }
-    
-    // 获取当前查看的文档 ID
-    const currentDocId = document.getElementById('viewDocumentTitle').dataset.documentId;
-    if (!currentDocId) return;
-    
-    // 读取开关状态
-    const useDocumentContext = document.getElementById('qaContextSwitch').checked;
-    
+
+    const answerWrapper = document.getElementById('qaAnswer');
+    const answerEl = document.getElementById('qaAnswerText');
+    const indicator = document.getElementById('qaStreamIndicator');
+
+    answerWrapper.style.display = 'block';
+    answerEl.value = '';
+    indicator.style.display = 'inline';
+    answerEl.classList.add('streaming');
+
+    showToast('AI 正在思考...', 'info');
+
     try {
-        showToast('正在思考...', 'info');
-        const answer = await askDocumentAPI(currentDocId, question, useDocumentContext);
-        
-        // 显示答案
-        document.getElementById('qaAnswer').style.display = 'block';
-        document.getElementById('qaAnswerText').value = answer;
-        input.value = '';
-        showToast('回答已生成', 'success');
+        await askDocumentStreamAPI(
+            currentDocId,
+            question,
+            useDocumentContext,
+            (chunk) => {
+                answerEl.value += chunk;
+                answerEl.scrollTop = answerEl.scrollHeight;
+            }
+        );
+
+        showToast('回答完成', 'success');
     } catch (error) {
-        showToast('回答失败: ' + error.message, 'error');
+        showToast('回答失败：' + error.message, 'error');
+        answerEl.value = '获取回答失败，请稍后重试。';
+    } finally {
+        indicator.style.display = 'none';
+        answerEl.classList.remove('streaming');
+
+        const rawAnswer = answerEl.value;
+        const currentDocTitle = document.getElementById('viewDocumentTitle').textContent;
+        const { answer, citations } = parseCitations(rawAnswer, currentDocTitle);
+
+        if (citations.length > 0) {
+            answerEl.value = answer;
+            const citationContainer = document.getElementById('qaCitations');
+            renderCitationCards(citations, citationContainer);
+        }
     }
 }
 
@@ -651,27 +756,49 @@ function resetNotebookQA() {
 async function askNotebook() {
     const input = document.getElementById('notebookQAInput');
     const question = input.value.trim();
-    
+
     if (!question) {
-        showToast('请输入问题', 'error');
+        showToast('请输入问题', 'warning');
         return;
     }
-    
-    if (!currentNotebookId) {
-        showToast('请先选择一个笔记本', 'error');
-        return;
-    }
-    
+
+    const answerWrapper = document.getElementById('notebookQAAnswer');
+    const answerEl = document.getElementById('notebookQAAnswerText');
+    const indicator = document.getElementById('notebookStreamIndicator');
+
+    answerWrapper.style.display = 'block';
+    answerEl.value = '';
+    indicator.style.display = 'inline';
+    answerEl.classList.add('streaming');
+
+    showToast('AI 正在综合多篇文档思考...', 'info');
+
     try {
-        showToast('正在综合多篇文档思考...', 'info');
-        const answer = await askNotebookAPI(currentNotebookId, question);
-        
-        document.getElementById('notebookQAAnswer').style.display = 'block';
-        document.getElementById('notebookQAAnswerText').value = answer;
-        input.value = '';
-        showToast('回答已生成', 'success');
+        await askNotebookStreamAPI(
+            currentNotebookId,
+            question,
+            (chunk) => {
+                answerEl.value += chunk;
+                answerEl.scrollTop = answerEl.scrollHeight;
+            }
+        );
+
+        showToast('回答完成', 'success');
     } catch (error) {
-        showToast('回答失败: ' + error.message, 'error');
+        showToast('回答失败：' + error.message, 'error');
+        answerEl.value = '获取回答失败，请稍后重试。';
+    } finally {
+        indicator.style.display = 'none';
+        answerEl.classList.remove('streaming');
+
+        const rawAnswer = answerEl.value;
+        const { answer, citations } = parseCitations(rawAnswer);
+
+        if (citations.length > 0) {
+            answerEl.value = answer;
+            const citationContainer = document.getElementById('notebookCitations');
+            renderCitationCards(citations, citationContainer);
+        }
     }
 }
 function triggerFileUpload() {
@@ -762,6 +889,92 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// ==================== Day 24: 引用溯源 ====================
+
+/**
+ * 解析带引用标记的 AI 回答
+ * @param {string} rawText - AI 返回的原始文本（含引用标记）
+ * @param {string} defaultTitle - 默认文档标题（单文档场景使用）
+ * @returns {Object} { answer: 正文, citations: [{id, title, snippet}] }
+ */
+function parseCitations(rawText, defaultTitle) {
+    const parts = rawText.split('---');
+    let answer = parts[0].trim();
+    const citations = [];
+
+    if (parts.length > 1) {
+        const citationText = parts[1].trim();
+        // 匹配多文档格式：[N] 【文档：标题】原文片段
+        const regex = /\[(\d+)\]\s*【?文档?：?([^】]+)】?\s*(.+)/g;
+        let match;
+        while ((match = regex.exec(citationText)) !== null) {
+            citations.push({
+                id: match[1],
+                title: match[2].trim(),
+                snippet: match[3].trim()
+            });
+        }
+        // 如果没匹配到（可能是单文档格式 [N] 原文片段），再尝试简化格式
+        if (citations.length === 0) {
+            const simpleRegex = /\[(\d+)\]\s*(.+)/g;
+            let simpleMatch;
+            while ((simpleMatch = simpleRegex.exec(citationText)) !== null) {
+                citations.push({
+                    id: simpleMatch[1],
+                    title: defaultTitle || '参考来源',
+                    snippet: simpleMatch[2].trim()
+                });
+            }
+        }
+    }
+
+    if (citations.length === 0) {
+        const inlineRegex = /\[(\d+)\]/g;
+        let inlineMatch;
+        while ((inlineMatch = inlineRegex.exec(answer)) !== null) {
+            citations.push({
+                id: inlineMatch[1],
+                title: defaultTitle || '未知来源',
+                snippet: ''
+            });
+        }
+    }
+
+    return { answer, citations };
+}
+
+/**
+ * 渲染引用来源卡片
+ * @param {Array} citations - 引用列表 [{id, title, snippet}]
+ * @param {HTMLElement} container - 容器元素
+ */
+function renderCitationCards(citations, container) {
+    if (!citations || citations.length === 0) {
+        container.innerHTML = '';
+        container.style.display = 'none';
+        return;
+    }
+
+    let html = '<div class="citation-header">参考来源</div>';
+    html += '<div class="citation-list">';
+
+    citations.forEach(cite => {
+        html += `
+            <div class="citation-card" data-cite-id="${cite.id}">
+                <div class="citation-number">[${cite.id}]</div>
+                <div class="citation-content">
+                    <div class="citation-title">${escapeHtml(cite.title)}</div>
+                    <div class="citation-snippet">${escapeHtml(cite.snippet)}</div>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+    container.style.display = 'block';
 }
 
 function formatDate(dateString) {
