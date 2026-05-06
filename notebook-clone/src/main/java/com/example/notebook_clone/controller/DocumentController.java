@@ -4,6 +4,7 @@ import com.example.notebook_clone.entity.User;
 import com.example.notebook_clone.repository.UserRepository;
 import com.example.notebook_clone.service.AiChatService;
 import com.example.notebook_clone.service.AiSummaryService;
+import com.example.notebook_clone.service.AsyncSummaryService;
 import com.example.notebook_clone.service.DocumentExtractService;
 
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -41,13 +42,15 @@ public class DocumentController {
     private final DocumentExtractService extractService;  // Day 16.5 新增
     private final AiSummaryService aiSummaryService;  // ← Day 20 新增
     private final AiChatService aiChatService;//← Day 21 新增
-    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService,AiChatService aiChatService) {
+    private final AsyncSummaryService asyncSummaryService; //← Day 25 新增
+    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService,AiChatService aiChatService,AsyncSummaryService asyncSummaryService) {
         this.documentRepository = documentRepository;
         this.notebookRepository = notebookRepository;
         this.userRepository = userRepository; 
         this.extractService = extractService;  // 新增赋值
         this.aiSummaryService = aiSummaryService;
         this.aiChatService = aiChatService;
+        this.asyncSummaryService = asyncSummaryService;
     }
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
@@ -126,10 +129,13 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
             document.setCreateTime(LocalDateTime.now());
             // ===== Day 20 新增：自动生成摘要 =====
             // 注意：这是同步调用，会阻塞 2~5 秒！
-            String summary = aiSummaryService.generateSummary(extractedText);
-            document.setSummary(summary);
-            // =====================================
-            return Result.success(documentRepository.save(document));
+            //String summary = aiSummaryService.generateSummary(extractedText);
+            //document.setSummary(summary);
+            // ===== Day 25 新增：异步调用自动生成摘要 =====
+            document.setSummary("摘要生成中...");  // 先给占位符
+            Document saved = documentRepository.save(document);  // 先保存，获得 ID
+            asyncSummaryService.generateSummaryAsync(saved.getId());  // 异步生成，不等结果
+            return Result.success(saved);  // 立刻返回
 
         } catch (IOException e) {
             // 如果读取文件失败，程序不能崩溃，要抛出异常报错
@@ -155,6 +161,22 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
         documentRepository.deleteById(id);
         return Result.success(null);
     }
+    @GetMapping("/{id}")
+        public Result<Document> getDocument(@PathVariable Long id) {
+        // 1. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+        // 2. 查询文档并校验归属
+        Document document = documentRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("文档不存在或无权访问"));
+
+        // 3. 返回文档（包含summary字段）
+        return Result.success(document);
+        }
+
     /**
      * 为已有文档生成/重新生成 AI 摘要
      */

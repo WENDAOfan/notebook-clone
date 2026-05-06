@@ -448,12 +448,15 @@ function renderDocumentList() {
     }
     
     container.innerHTML = currentDocuments.map(doc => {
-        const hasSummary = doc.summary && doc.summary !== '内容过短，无需摘要';
+        const isGenerating = doc.summary === '摘要生成中...';
+        const hasSummary = doc.summary && doc.summary !== '内容过短，无需摘要' && !isGenerating;
         const isShort = doc.summary === '内容过短，无需摘要';
-        const canGenerate = !hasSummary && !isShort && doc.content && doc.content.length >= 50;
-        
+        const canGenerate = !hasSummary && !isShort && !isGenerating && doc.content && doc.content.length >= 50;
+
         let summaryHtml = '';
-        if (hasSummary) {
+        if (isGenerating) {
+            summaryHtml = '<div class="summary-row"><span class="summary-loading">🤖 AI 摘要正在生成中，请稍后刷新...</span></div>';
+        } else if (hasSummary) {
             summaryHtml = `
                 <div class="summary-row">
                     <div class="summary-preview collapsed" id="summary-preview-${doc.id}">
@@ -642,7 +645,12 @@ function viewDocument(id) {
     const summaryText = document.getElementById('viewSummaryText');
     const regenBtn = document.getElementById('viewSummaryRegenBtn');
     
-    if (doc.summary && doc.summary !== '内容过短，无需摘要') {
+    if (doc.summary === '摘要生成中...') {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '🤖 AI 摘要正在生成中，请稍后刷新...';
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'none';
+    } else if (doc.summary && doc.summary !== '内容过短，无需摘要') {
         summaryBox.style.display = 'block';
         summaryText.textContent = doc.summary;
         summaryText.classList.remove('summary-hint');
@@ -821,16 +829,46 @@ async function handleFileUpload(event) {
     
     try {
         showUploadOverlay();
-        await uploadDocumentFileAPI(file, currentNotebookId);
+        const uploadedDoc = await uploadDocumentFileAPI(file, currentNotebookId);
         hideUploadOverlay();
-        showToast('文件上传成功，AI 摘要已生成', 'success');
+        showToast('文件上传成功，摘要生成中...', 'success');
         event.target.value = '';
-        currentDocuments = await getDocumentsByNotebook(currentNotebookId);
+        // 直接把新文档加进列表，不整页刷新（摘要还是"生成中"）
+        currentDocuments.push(uploadedDoc);
         renderDocumentList();
+        // 启动轮询，等摘要生成好就自动更新
+        pollSummaryReady(uploadedDoc.id, 1, 12);
     } catch (error) {
         hideUploadOverlay();
         showToast('上传失败: ' + error.message, 'error');
     }
+}
+
+// Day 25：轮询检查摘要是否异步生成完毕
+function pollSummaryReady(docId, attempt, maxAttempts) {
+    if (attempt > maxAttempts) {
+        console.warn('[轮询] 摘要生成超时，docId=' + docId);
+        return;
+    }
+
+    setTimeout(async () => {
+        try {
+            const doc = await fetchAPI(`/api/documents/${docId}`);
+            if (doc && doc.summary !== '摘要生成中...') {
+                // 摘要已就绪，更新 currentDocuments 中的对应文档
+                const idx = currentDocuments.findIndex(d => d.id === docId);
+                if (idx !== -1) {
+                    currentDocuments[idx] = doc;
+                }
+                renderDocumentList();
+            } else {
+                // 还没好，2 秒后再查
+                pollSummaryReady(docId, attempt + 1, maxAttempts);
+            }
+        } catch (e) {
+            console.warn('[轮询] 查询摘要失败: ' + e.message);
+        }
+    }, 2000);
 }
 
 // ==================== 弹窗控制 ====================

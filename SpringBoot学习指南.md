@@ -36,12 +36,14 @@
    - [6. 数据隔离与权限控制（Day 16）](#toc-data-isolation)
    - [7. Spring AI 集成（Day 18/19）](#toc-spring-ai)
    - [8. ChatClient 调用与 Prompt 工程（Day 19）](#toc-chatclient)
-   - [9. 同步阻塞与异步优化预告](#toc-sync-blocking)
+   - [9. 同步阻塞与 @Async 异步实战（Day 25）](#toc-sync-blocking)
    - [10. AI 文档摘要自动生成（Day 20）](#toc-ai-summary)
    - [11. 基于单个文档的智能问答（Day 21）](#toc-ai-qa)
    - [12. 前端问答优化：回答框改大 + 智能问答开关（Day 21-5）](#toc-ai-qa-switch)
    - [13. 笔记本级多文档智能问答（Day 22）](#toc-ai-notebook-qa)
    - [14. AI 流式输出 SSE 打字机效果（Day 23）](#toc-ai-sse-streaming)
+   - [15. AI 引用溯源 — 标注引用来源（Day 24）](#toc-ai-citation)
+   - [16. @Async 异步摘要 + 前端轮询（Day 25）](#toc-async-summary)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -64,7 +66,11 @@ notebook-clone/
 │   │   ├── NotebookController.java      ← 笔记本相关接口
 │   │   └── UserController.java          ← 用户相关接口
 │   ├── service/                         ← 【业务层】处理业务逻辑
-│   │   └── AuthService.java             ← 登录/注册业务
+│   │   ├── AuthService.java             ← 登录/注册业务
+│   │   ├── AiChatService.java           ← AI 问答服务（单文档 + 多文档 + 流式）
+│   │   ├── AiSummaryService.java        ← AI 摘要生成服务
+│   │   ├── AsyncSummaryService.java     ← 异步摘要生成（@Async，Day 25）
+│   │   └── DocumentExtractService.java  ← 文档内容提取
 │   ├── repository/                      ← 【数据层】数据库操作
 │   │   ├── DocumentRepository.java      ← 文档数据访问
 │   │   ├── NotebookRepository.java      ← 笔记本数据访问
@@ -76,7 +82,8 @@ notebook-clone/
 │   ├── filter/                          ← 【过滤器层】请求拦截与预处理
 │   │   └── JwtAuthenticationFilter.java ← JWT认证过滤器（验证Token）
 │   ├── config/                          ← 【配置层】Spring 配置
-│   │   └── SecurityConfig.java          ← 安全配置（密码加密、权限、过滤器链）
+│   │   ├── SecurityConfig.java          ← 安全配置（密码加密、权限、过滤器链）
+│   │   └── AsyncConfig.java             ← 异步线程池配置（@EnableAsync，Day 25）
 │   ├── util/                            ← 【工具层】工具类
 │   │   └── JwtUtil.java                 ← JWT Token 生成/校验工具
 │   └── common/                          ← 【公共层】通用工具
@@ -2092,72 +2099,174 @@ Content-Type: application/json
 ---
 
 <a id="toc-sync-blocking"></a>
-### 9. 同步阻塞与异步优化预告
+### 9. 同步阻塞与 @Async 异步实战（Day 25）
 
 #### 9.1 什么是同步阻塞？
 
-Day 19 使用的是**同步调用**：
+Day 24 的文档上传流程中，AI 摘要生成会阻塞接口：
 
 ```java
-String answer = chatClient.prompt()
-        .user("复杂问题...")
-        .call()      // ← 线程在这里停住，等服务器返回
-        .content();  // ← 等 2~5 秒后才执行到这里
-
-// 这行代码在 .call() 返回前不会执行
-System.out.println("这行会等 AI 回复后才打印");
+// 同步模式：用户要一直等
+String summary = aiSummaryService.generateSummary(content);  // ← 阻塞 3~10 秒
+document.setSummary(summary);
+return Result.success(documentRepository.save(document));
 ```
 
-**执行期间线程的状态变化**：
+**问题**：AI 调用是外部网络请求，往返 + 推理需要好几秒。这期间 Tomcat 线程被占用，用户看着页面转圈。
+
+#### 9.2 异步的思路
+
+发起慢任务后**不等它完成**，立刻返回。慢任务在后台线程自己跑。
 
 ```
-用户请求 → Tomcat 分配线程 T1 → 执行 Controller → 到达 .call()
-                                                    │
-                                            线程 T1 阻塞（BLOCKED/WAITING）
-                                                    │ 等待 DeepSeek 服务器响应
-                                                    │ 通常 2~5 秒
-                                                    ▼
-                                              收到响应，继续执行 → 返回 JSON
+用户上传 → 保存文件 → 立刻返回"上传成功"
+                ↓
+         后台线程：慢慢调 AI → 更新摘要字段
 ```
 
-#### 9.2 同步阻塞的优缺点
+#### 9.3 @Async 核心机制
 
-| 优点 | 缺点 |
-|------|------|
-| 代码简单直观，一行调完 | **线程被占用**，并发能力受限 |
-| 适合快速验证原型 | **用户等待时间长**（浏览器转圈），体验差 |
-| 容易调试（线性执行） | 网络波动会导致接口超时 |
-| 异常处理简单 | 高并发时 Tomcat 线程池耗尽 |
+Spring 提供的**声明式异步注解**。方法上加 `@Async`，Spring 自动用线程池执行它。
 
-**实测响应时间**：
+| 要点 | 说明 |
+|:---|:---|
+| 启用方式 | 启动类加 `@EnableAsync` |
+| 必须跨类调用 | `@Async` 方法写在 **另一个类** 里才生效（AOP 代理机制） |
+| 自定义线程池 | 默认 `SimpleAsyncTaskExecutor` 每次新建线程，不推荐 |
 
-| 问题类型 | 大约耗时 |
-|---------|---------|
-| 简单问题（自我介绍）| ~1~2 秒 |
-| 中等问题（概念解释）| ~2~4 秒 |
-| 复杂问题（详细分析）| ~3~8 秒 |
+#### 9.4 启动类加 @EnableAsync
 
-#### 9.3 解决方案预告
+```java
+@SpringBootApplication
+@EnableAsync  // 开启异步支持
+public class NotebookCloneApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(NotebookCloneApplication.class, args);
+    }
+}
+```
 
-| 方案 | 对应 Day | 说明 |
-|------|---------|------|
-| **SSE 流式输出** | Day 23 | 像"打字机"一样逐字返回，不用干等 |
-| **@Async 异步处理** | Day 25 | 不紧急的任务（如摘要生成）丢到后台线程池 |
+#### 9.5 自定义线程池（AsyncConfig）
 
-> 当前阶段先理解"同步阻塞"的概念就够了。Day 23 我们会把它改造成流式输出。
+```java
+@Configuration
+@EnableAsync
+public class AsyncConfig {
 
----
+    @Bean(name = "aiTaskExecutor")
+    public Executor aiTaskExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);       // 常驻 2 个线程
+        executor.setMaxPoolSize(5);        // 最多扩到 5 个
+        executor.setQueueCapacity(50);     // 队列最多 50 个
+        executor.setThreadNamePrefix("ai-async-");
+        executor.setRejectedExecutionHandler(
+            new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+        executor.initialize();
+        return executor;
+    }
+}
+```
 
-#### 9.4 Day 19 完成标志自查
+**线程池工作流程**：
 
-- [ ] `TestAiController` 已创建，`ChatClient.Builder` 成功注入并 `.build()`
-- [ ] `GET /test/ai` 能返回固定问题的 AI 回复（验证基本连通性）
-- [ ] `ChatRequest` DTO 已创建（含 question + systemPrompt 字段）
-- [ ] `POST /test/ai` 支持传入动态问题和可选 System Prompt
-- [ ] 测试了"带 System Prompt"和"不带 System Prompt"的效果差异
-- [ ] 测试了空问题返回错误
-- [ ] 观察到接口有明显等待时间（2~5 秒），理解这是同步阻塞特性
-- [ ] `SecurityConfig` 已放行 `/test/**` 路径
+```
+来了任务 → core 线程(2个) → 满了进队列(50个) → 满了扩线程(最多5个) → 还是满的走拒绝策略
+```
+
+| 参数 | 取值 | 原因 |
+|:---|:---|:---|
+| `corePoolSize` | 2 | AI 调用依赖外部 API，并发太高易限流 |
+| `maxPoolSize` | 5 | 峰值时多开几个兜底 |
+| `queueCapacity` | 50 | 连续上传多文档时排队，不丢任务 |
+| `CallerRunsPolicy` | 队列满后调用者自己跑 | 变同步，天然减速带，不抛异常 |
+
+#### 9.6 异步摘要服务（AsyncSummaryService）
+
+```java
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AsyncSummaryService {
+
+    private final AiSummaryService aiSummaryService;
+    private final DocumentRepository documentRepository;
+
+    @Async("aiTaskExecutor")  // 用自定义线程池
+    public void generateSummaryAsync(Long documentId) {
+        log.info("[异步摘要] 开始生成文档 {} 的摘要", documentId);
+        try {
+            Document document = documentRepository.findById(documentId).orElse(null);
+            if (document == null || document.getContent() == null
+                    || document.getContent().isEmpty()) {
+                return;
+            }
+            String summary = aiSummaryService.generateSummary(document.getContent());
+            document.setSummary(summary);
+            documentRepository.save(document);
+            log.info("[异步摘要] 文档 {} 摘要生成成功", documentId);
+        } catch (Exception e) {
+            log.error("[异步摘要] 文档 {} 摘要生成失败: {}", documentId, e.getMessage());
+        }
+    }
+}
+```
+
+**为什么 @Async 方法必须跨类调用？**
+
+```java
+// ❌ 错误：同类中调用，this.foo() 不走 Spring AOP 代理
+@Service
+public class XxxService {
+    public void upload() {
+        this.generateSummaryAsync(docId);  // @Async 不生效！
+    }
+    @Async
+    public void generateSummaryAsync(Long docId) { ... }
+}
+
+// ✅ 正确：注入另一个 Service 来调用
+@RestController
+public class DocumentController {
+    private final AsyncSummaryService asyncSummaryService;  // 注入
+
+    public void upload() {
+        asyncSummaryService.generateSummaryAsync(docId);  // 走代理，真正异步
+    }
+}
+```
+
+#### 9.7 改造上传接口
+
+```java
+@PostMapping("/upload")
+public Result<Document> uploadDocumentFile(...) {
+    // ... 解析文件、构建 Document 实体 ...
+    document.setSummary("摘要生成中...");               // 占位符
+    Document saved = documentRepository.save(document); // 先存，获得自增 ID
+    asyncSummaryService.generateSummaryAsync(saved.getId());  // 异步，不阻塞
+    return Result.success(saved);                       // 立刻返回
+}
+```
+
+**为什么先 save 再调 async？** JPA 的 `@GeneratedValue` 自增 ID 在 `save()` 之后才有值。先 save 再传 ID 给 async，async 线程才能通过 `findById(id)` 查到文档。
+
+#### 9.8 常见踩坑
+
+| 问题 | 原因 | 解决 |
+|:---|:---|:---|
+| `@Async` 没生效 | 同类中直接调用，没走代理 | 注入另一个 Service 来调用 |
+| 用的还是默认线程池 | `@Async` 没指定名称 | 写成 `@Async("aiTaskExecutor")` |
+| 异常吞掉了看不到 | 异步线程异常不抛给调用方 | 方法内部 try-catch 并记日志 |
+
+#### 9.9 效果对比
+
+| | 改造前 | 改造后 |
+|:---|:---|:---|
+| 上传响应时间 | 3~10 秒 | < 200ms |
+| 摘要何时出现 | 等接口返回 | 几秒后自动更新（前端轮询） |
+| 用户体验 | 干等，转圈 | 上传成功，摘要自动刷新 |
 
 ---
 
@@ -3259,6 +3368,369 @@ data: ...
 
 ---
 
+<a id="toc-ai-citation"></a>
+### 15. AI 引用溯源 — 标注引用来源（Day 24）
+
+> 核心目标：在 AI 流式回答中标注引用的原文段落来源，实现 NotebookLM 式的引用体验——用户不仅看到答案，还能知道答案来自哪篇文档的哪段内容。
+
+#### 15.1 为什么需要引用溯源
+
+| 问题 | 没有引用溯源 | 有引用溯源 |
+|:---|:---|:---|
+| **AI 幻觉** | 用户无法分辨真假 | 用户可点击引用跳转原文验证 |
+| **可信度** | "AI 说的，不一定对" | "AI 引用了我的文档，可信" |
+| **深度阅读** | 看完回答就结束 | 可定位到原文深入阅读 |
+| **多文档场景** | 不知道答案来自哪篇 | 清楚看到各篇文档的贡献 |
+
+#### 15.2 技术路线：Prompt 引导（文档级别）
+
+| 路线 | 原理 | 精度 | 复杂度 |
+|:---|:---|:---|:---|
+| **Prompt 引导**（今天用） | 在 System Prompt 中要求 AI 自行标注来源 | 中等（到文档级别） | 低 ✅ |
+| **RAG + 向量检索**（Day 28） | 先检索相关段落，再让 AI 基于检索结果回答 | 高（到段落级别） | 高 |
+
+#### 15.3 引用格式设计
+
+前后端约定的引用标记格式：
+
+```
+AI 回答正文...这里引用了某段内容[1]...继续回答...
+
+---
+参考来源：
+[1] 【文档：Spring Boot 入门.txt】Spring Boot 是 Spring 框架的扩展...
+```
+
+- `[N]`：引用标记，插在正文引用处（简洁美观）
+- `---`：分隔线，明确区分"回答正文"和"参考来源"
+- 参考来源列表：编号 + 文档标题 + 原文片段
+
+#### 15.4 后端改造：System Prompt 增加引用要求
+
+**单文档**（`buildSingleDocSystemPrompt`）：
+
+```java
+? """
+  你是一位知识库问答助手。请严格遵循以下规则：
+  1. 只基于用户提供的【文档内容】回答问题
+  2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
+  3. 回答要简洁，控制在 300 字以内
+  4. 不要添加文档中没有的信息
+  5. 引用文档具体内容时，必须在引用处添加标记 [1]
+  6. 回答末尾必须用 "---" 分隔，然后列出参考来源：[1] 原文片段
+  """
+```
+
+**多文档**（`buildMultiDocSystemPrompt`）：
+
+```java
+"""
+你是一位知识库问答助手。请严格遵循以下规则：
+1. 只基于用户提供的【文档内容】回答问题
+2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
+3. 回答要简洁，控制在 300 字以内
+4. 不要添加文档中没有的信息
+5. 如果有多篇文档，综合各篇文档的信息进行回答
+6. 引用某篇文档的具体内容时，必须在引用处添加标记 [N]，N 从 1 开始递增
+7. 回答末尾必须用 "---" 分隔，然后列出所有参考来源，格式为：
+   [N] 【文档：标题】原文片段
+""";
+```
+
+#### 15.5 前端改造：解析引用标记并渲染
+
+**`parseCitations(rawText, defaultTitle)`** — 分割解析函数：
+
+```javascript
+function parseCitations(rawText, defaultTitle) {
+    const parts = rawText.split('---');
+    let answer = parts[0].trim();
+    const citations = [];
+
+    if (parts.length > 1) {
+        const citationText = parts[1].trim();
+        // 匹配多文档格式：[N] 【文档：标题】原文片段
+        const regex = /\[(\d+)\]\s*【?文档?：?([^】]+)】?\s*(.+)/g;
+        let match;
+        while ((match = regex.exec(citationText)) !== null) {
+            citations.push({
+                id: match[1],
+                title: match[2].trim(),
+                snippet: match[3].trim()
+            });
+        }
+        // 简化格式兜底（单文档没有【文档：标题】时）
+        if (citations.length === 0) {
+            const simpleRegex = /\[(\d+)\]\s*(.+)/g;
+            let simpleMatch;
+            while ((simpleMatch = simpleRegex.exec(citationText)) !== null) {
+                citations.push({
+                    id: simpleMatch[1],
+                    title: defaultTitle || '参考来源',
+                    snippet: simpleMatch[2].trim()
+                });
+            }
+        }
+    }
+
+    // 如果正文中有 [N] 标记但 citations 为空，fallback 兜底
+    if (citations.length === 0) {
+        const inlineRegex = /\[(\d+)\]/g;
+        let inlineMatch;
+        while ((inlineMatch = inlineRegex.exec(answer)) !== null) {
+            citations.push({
+                id: inlineMatch[1],
+                title: defaultTitle || '未知来源',
+                snippet: ''
+            });
+        }
+    }
+
+    return { answer, citations };
+}
+```
+
+**关键设计点**：
+- `defaultTitle` 参数：单文档场景传入当前文档标题，解决"未知来源"问题
+- 三层解析策略：多文档格式 → 简化格式 → inline 标记兜底
+- 优雅降级：AI 不输出引用时，正常显示回答正文
+
+**`renderCitationCards(citations, container)`** — 卡片渲染函数：
+
+```javascript
+function renderCitationCards(citations, container) {
+    if (!citations || citations.length === 0) {
+        container.innerHTML = '';
+        container.style.display = 'none';
+        return;
+    }
+
+    let html = '<div class="citation-header">参考来源</div>';
+    html += '<div class="citation-list">';
+
+    citations.forEach(cite => {
+        html += `
+            <div class="citation-card" data-cite-id="${cite.id}">
+                <div class="citation-number">[${cite.id}]</div>
+                <div class="citation-content">
+                    <div class="citation-title">${escapeHtml(cite.title)}</div>
+                    <div class="citation-snippet">${escapeHtml(cite.snippet)}</div>
+                </div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+    container.style.display = 'block';
+}
+```
+
+#### 15.6 调用位置
+
+在 `askDocument()` 和 `askNotebook()` 的 `finally` 块中，流式输出完成后调用：
+
+```javascript
+const rawAnswer = answerEl.value;
+const currentDocTitle = document.getElementById('viewDocumentTitle').textContent;
+const { answer, citations } = parseCitations(rawAnswer, currentDocTitle);
+
+if (citations.length > 0) {
+    answerEl.value = answer;  // 只保留正文部分（去掉 --- 后面的来源列表）
+    const citationContainer = document.getElementById('qaCitations');
+    renderCitationCards(citations, citationContainer);
+}
+```
+
+#### 15.7 样式设计
+
+```css
+.citations-container {
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 3px solid #4a90d9;
+}
+
+.citation-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 12px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #e1e4e8;
+    transition: all 0.2s ease;
+}
+
+.citation-card:hover {
+    border-color: #4a90d9;
+    box-shadow: 0 2px 4px rgba(74, 144, 217, 0.1);
+}
+
+.citation-number {
+    min-width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #4a90d9;
+    color: white;
+    border-radius: 50%;
+    font-size: 0.8em;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+```
+
+#### 15.8 Day 24 完成标志自查
+
+- [ ] 能解释什么是引用溯源（Citation）及其重要性
+- [ ] 理解 Prompt 工程实现引用溯源的原理和局限性
+- [ ] 知道 `[N]` 和 `---` 分隔线的设计意图
+- [ ] 理解 `parseCitations()` 的三层解析策略（多文档格式 → 简化格式 → inline 兜底）
+- [ ] 知道为什么需要 `escapeHtml()`（防止 XSS 攻击）
+- [ ] 测试确认能看到 `[1]` 引用标记和引用卡片
+- [ ] 测试确认无引用时前端优雅降级（不报错、不显示空卡片）
+- [ ] 单文档场景引用卡片显示真实文档标题（非"未知来源"）
+
+---
+
+<a id="toc-async-summary"></a>
+### 16. @Async 异步摘要 + 前端轮询自动更新（Day 25）
+
+> 核心目标：将文档上传后的 AI 摘要生成改为异步，上传立刻返回不阻塞；前端自动轮询等待摘要就绪，无需用户手动刷新。
+
+#### 16.1 改造前后对比
+
+```
+改造前（同步）：
+  上传 → 保存文件 → 调 AI 生成摘要（阻塞 3~10 秒！）→ 返回响应
+
+改造后（异步 + 轮询）：
+  上传 → 保存文件（summary="摘要生成中..."）→ 立刻返回（< 200ms）
+           ↓
+    后台线程调 AI → 更新 summary
+           ↓
+    前端每 2 秒轮询 → 摘要变了 → 自动更新 UI
+```
+
+#### 16.2 后端新增：GET /{id} 查询单个文档
+
+轮询需要一个按 ID 查文档的接口：
+
+```java
+@GetMapping("/{id}")
+public Result<Document> getDocument(@PathVariable Long id) {
+    String username = SecurityContextHolder.getContext()
+            .getAuthentication().getName();
+    User currentUser = userRepository.findByUsername(username)
+            .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+    Document document = documentRepository.findByIdAndUserId(id, currentUser.getId())
+            .orElseThrow(() -> new RuntimeException("文档不存在或无权访问"));
+
+    return Result.success(document);  // 包含 summary 字段
+}
+```
+
+#### 16.3 前端：轮询函数
+
+```javascript
+// 每 2 秒查一次，摘要就绪后自动更新列表
+function pollSummaryReady(docId, attempt, maxAttempts) {
+    if (attempt > maxAttempts) {
+        console.warn('[轮询] 摘要生成超时，docId=' + docId);
+        return;  // 超过 12 次（24 秒）放弃
+    }
+
+    setTimeout(async () => {
+        try {
+            const doc = await fetchAPI(`/api/documents/${docId}`);
+            if (doc && doc.summary !== '摘要生成中...') {
+                // 摘要已就绪，原地更新列表中的文档数据
+                const idx = currentDocuments.findIndex(d => d.id === docId);
+                if (idx !== -1) {
+                    currentDocuments[idx] = doc;
+                }
+                renderDocumentList();  // 重新渲染，摘要自动替换
+            } else {
+                pollSummaryReady(docId, attempt + 1, maxAttempts);
+            }
+        } catch (e) {
+            console.warn('[轮询] 查询摘要失败: ' + e.message);
+        }
+    }, 2000);
+}
+```
+
+#### 16.4 前端：上传成功回调改造
+
+```javascript
+const uploadedDoc = await uploadDocumentFileAPI(file, currentNotebookId);
+showToast('文件上传成功，摘要生成中...', 'success');
+currentDocuments.push(uploadedDoc);  // 直接加到列表（显示"摘要生成中..."）
+renderDocumentList();
+pollSummaryReady(uploadedDoc.id, 1, 12);  // 启动轮询，最多 24 秒
+```
+
+#### 16.5 前端：摘要状态 UI
+
+```javascript
+const isGenerating = doc.summary === '摘要生成中...';
+if (isGenerating) {
+    summaryHtml = '<span class="summary-loading">AI 摘要正在生成中...</span>';
+}
+```
+
+CSS 呼吸动画：
+```css
+.summary-loading {
+    color: #999;
+    font-style: italic;
+    animation: summaryPulse 1.5s ease-in-out infinite;
+}
+@keyframes summaryPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+```
+
+#### 16.6 设计决策：为什么选前端轮询而不是 WebSocket/SSE 推送
+
+| 方案 | 复杂度 | 实时性 | 适合场景 |
+|:---|:---|:---|:---|
+| **前端轮询**（选用） | 低 | 2 秒延迟 | 摘要生成 3~10 秒，轮 2~4 次就够了 |
+| SSE 推送 | 中 | 实时 | 需要服务端主动推，但跨请求推送较复杂 |
+| WebSocket | 高 | 实时 | 双向频繁通信 |
+
+选轮询的理由：改动最小（只加一个后端接口 + 前端函数），用户感知不到 2 秒延迟，实现简单可靠。
+
+#### 16.7 完成效果
+
+| | 改造前 | 改造后 |
+|:---|:---|:---|
+| 上传响应时间 | 3~10 秒 | < 200ms |
+| 摘要何时出现 | 等接口返回 | 几秒后自动出现 |
+| 用户操作 | 干等、手动刷新 | 上传后摘要自动出现 |
+| 用户体验 | "API 挂了吗？" | "摘要自动出来了" |
+
+#### 16.8 Day 25 完成标志自查
+
+- [ ] 理解同步 vs 异步（等 vs 不等）
+- [ ] `@EnableAsync` 已加到启动类
+- [ ] `AsyncConfig` 配置类已创建，自定义了 `aiTaskExecutor` 线程池
+- [ ] `AsyncSummaryService` 已创建，使用 `@Async("aiTaskExecutor")`
+- [ ] `DocumentController.uploadDocumentFile()` 已改造为异步生成摘要
+- [ ] `GET /{id}` 接口已添加，支持按 ID 查询单个文档
+- [ ] 前端 `pollSummaryReady` 轮询函数已实现
+- [ ] 上传文档后摘要自动出现，无需手动刷新
+- [ ] 日志中看到 `[ai-async-1]` 前缀的线程名
+- [ ] 上传接口响应时间从 3~10 秒降到 < 200ms
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -3352,3 +3824,4 @@ data: ...
 > - 2026-04-26：新增第 12 章 前端问答优化（Day 21-5）：智能问答开关设计、后端 Prompt 动态切换原理、DTO 向后兼容设计、前端开关控件 + textarea 回答区改造、CSS 滑块样式
 > - 2026-04-27：新增第 13 章 笔记本级多文档智能问答（Day 22）：多文档上下文拼接策略、50000 字宽松截断上限、List<String[]> 参数设计、NotebookController 新增 /{id}/ask 接口、前端渐变卡片式问答面板、三种截断策略对比
 > - 2026-04-28：新增第 14 章 AI 流式输出 SSE 打字机效果（Day 23）：SSE vs WebSocket 认知、Flux<String> 响应式基础、Service 层抽取私有方法 + 新增流式方法、Controller 层三个流式端点、 produces = TEXT_EVENT_STREAM_VALUE、中文乱码修复、api.http SSE 测试
+> - 2026-04-30：新增第 15 章 AI 引用溯源（Day 24）：Prompt 工程实现引用标记 [N]、前后端引用格式约定、parseCitations 分割解析逻辑、renderCitationCards 卡片渲染、单文档标题自动填充、优雅降级设计

@@ -620,6 +620,18 @@ body {
     font-style: italic;
 }
 
+/* Day 25: 摘要异步生成中 */
+.summary-loading {
+    font-size: 13px;
+    color: #999;
+    font-style: italic;
+    animation: summaryPulse 1.5s ease-in-out infinite;
+}
+@keyframes summaryPulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
 /* 查看弹窗中的摘要区域 */
 .document-summary-box {
     background: linear-gradient(135deg, #f8f9ff 0%, #f0f4ff 100%);
