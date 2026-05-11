@@ -118,6 +118,18 @@
 			<artifactId>spring-ai-starter-model-openai</artifactId>
 		</dependency>
 		<!-- ======================================= -->
+		<!-- ===== Day 26 新增：Spring Retry 重试机制 ===== -->
+		<dependency>
+			<groupId>org.springframework.retry</groupId>
+			<artifactId>spring-retry</artifactId>
+		</dependency>
+
+		<!-- Spring AOP（@Retryable 底层依赖 AOP 代理实现，不加不生效） -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-starter-aop</artifactId>
+		<!-- 不加 spring-boot-starter-aop，@Retryable 不会生效 -->
+		</dependency>
 
 	</dependencies>
 
