@@ -4,6 +4,14 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import java.util.List;
 import reactor.core.publisher.Flux;  //day23"推送式"的数据流
+import lombok.extern.slf4j.Slf4j;//Lombok 自动生成 log 对象，让你能写 log.info(...)
+import org.springframework.ai.chat.model.ChatResponse;//替代 String 接收 AI 返回值，包含文本 + Token 信息
+import org.springframework.retry.annotation.Backoff;//@Retryable 的退避参数（等多久、间隔倍数）
+import org.springframework.retry.annotation.Recover;//标记兜底方法——重试全部失败后自动调用
+import org.springframework.retry.annotation.Retryable;//标记方法为可重试
+import org.springframework.web.client.RestClientException;//	HTTP 调用层的异常，作为重试触发条件
+
+@Slf4j
 @Service
 public class AiChatService {
 
@@ -12,7 +20,19 @@ public class AiChatService {
     public AiChatService(ChatClient.Builder chatClientBuilder) {
         this.chatClient = chatClientBuilder.build();
     }
-
+    /**
+     * 基于单个文档内容回答用户问题
+     *
+     * @param documentContent 文档内容
+     * @param question        用户问题
+     * @param useDocumentContext 是否基于文档内容进行回答
+     * @return AI 基于文档内容的回答
+     */
+    @Retryable(
+        retryFor = {RestClientException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1500, multiplier = 1.5)
+    )
     public String askBasedOnDocument(String documentContent, String question, boolean useDocumentContext) {
         // 如果文档内容为空，且用户要求基于文档回答
         if ((documentContent == null || documentContent.trim().isEmpty()) && useDocumentContext) {
@@ -51,14 +71,33 @@ public class AiChatService {
                   """.formatted(context, question)
                 : question;
 
-        String answer = chatClient.prompt()
-                .system(systemPrompt)
-                .user(userPrompt)
-                .call()
-                .content();
+        // String answer = chatClient.prompt()
+        //         .system(systemPrompt)
+        //         .user(userPrompt)
+        //         .call()
+        //         .content();
+        ChatResponse chatResponse = chatClient.prompt()
+        .system(systemPrompt)
+        .user(userPrompt)
+        .call()
+        .chatResponse();
 
+        String answer = chatResponse.getResult().getOutput().getText();
+        // Token 日志
+        var usage = chatResponse.getMetadata().getUsage();
+        if (usage != null) {
+            log.info("[Token] 单文档问答 | 文档长度: {} | 输入: {} | 输出: {} | 总计: {}",
+                documentContent != null ? documentContent.length() : 0,
+                usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+        }
         return answer;
     }
+    @Recover
+    public String askBasedOnDocumentRecover(RestClientException e, String documentContent, String question, boolean useDocumentContext) {
+    log.error("[重试] 单文档问答失败，已重试 3 次: {}", e.getMessage());
+    return "AI 服务暂时不可用，请稍后重试";
+    }
+
         /**
      * 基于笔记本内多篇文档内容回答用户问题
      *
@@ -66,6 +105,11 @@ public class AiChatService {
      * @param question      用户问题
      * @return AI 基于所有文档内容的综合回答
      */
+    @Retryable(
+        retryFor = {RestClientException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1500, multiplier = 1.5)
+    )
     public String askBasedOnDocuments(List<String[]> documents, String question) {
         // 如果没有文档
         if (documents == null || documents.isEmpty()) {
@@ -116,26 +160,40 @@ public class AiChatService {
         }
 
         // 调用 AI
-        String answer = chatClient.prompt()
-                .system("""
-                        你是一位知识库问答助手。请严格遵循以下规则：
-                        1. 只基于用户提供的【文档内容】回答问题
-                        2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
-                        3. 回答要简洁，控制在 300 字以内
-                        4. 不要添加文档中没有的信息
-                        5. 如果有多篇文档，综合各篇文档的信息进行回答
-                        """)
-                .user("""
-                        【文档内容】    
-                        %s
-                        【用户问题】
-                        %s
-                        """.formatted(context, question))
-                .call()
-                .content();
+        ChatResponse chatResponse = chatClient.prompt()
+        .system("""
+                你是一位知识库问答助手。请严格遵循以下规则：
+                1. 只基于用户提供的【文档内容】回答问题
+                2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
+                3. 回答要简洁，控制在 300 字以内
+                4. 不要添加文档中没有的信息
+                5. 如果有多篇文档，综合各篇文档的信息进行回答
+                """)
+        .user("""
+                【文档内容】    
+                %s
+                【用户问题】
+                %s
+                """.formatted(context, question))
+        .call()
+        .chatResponse();
+
+        String answer = chatResponse.getResult().getOutput().getText();
+        var usage = chatResponse.getMetadata().getUsage();
+        if (usage != null) {
+            log.info("[Token] 多文档问答 | 文档数: {} | 上下文长度: {} | 输入: {} | 输出: {} | 总计: {}",
+                documents.size(), context.length(),
+                usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+        }
 
         return answer;
     }
+    @Recover
+    public String askBasedOnDocumentsRecover(RestClientException e, List<String[]> documents, String question) {
+        log.error("[重试] 多文档问答失败，已重试 3 次: {}", e.getMessage());
+        return "AI 服务暂时不可用，请稍后重试";
+    }
+
     // ========== 新增：私有方法 + 流式方法 ==========
     
     // 1. 单文档 System Prompt 构建
@@ -218,10 +276,26 @@ public class AiChatService {
         String userPrompt = buildSingleDocUserPrompt(context, question, useDocumentContext);
         
         return chatClient.prompt()
-                .system(systemPrompt)
-                .user(userPrompt)
-                .stream()      // 流
-                .content();
+            .system(systemPrompt)
+            .user(userPrompt)
+            .stream()
+            .chatResponse()
+            .doOnNext(chunk -> {
+                var usage = chunk.getMetadata() != null ? chunk.getMetadata().getUsage() : null;
+                if (usage != null) {
+                    log.info("[Token] 流式单文档问答 | 输入：{} | 输出：{} | 总计：{}",
+                            usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+                }
+            })
+            .map(chunk -> {
+                var result = chunk.getResult();
+                if (result != null && result.getOutput() != null) {
+                    return result.getOutput().getText();
+                }
+                return "";  // 无内容的 chunk 返回空串
+            })
+            .filter(text -> !text.isEmpty())  // 过滤掉空串，避免前端收到多余空事件
+            .onErrorReturn("AI 服务暂时不可用，请稍后重试");
     }
     // 5. 流式方法 B：多文档
     public Flux<String> askBasedOnDocumentsStream(
@@ -278,9 +352,25 @@ public class AiChatService {
         String userPrompt = buildMultiDocUserPrompt(context, question);
         
         return chatClient.prompt()
-                .system(systemPrompt)
-                .user(userPrompt)
-                .stream()
-                .content();
+            .system(systemPrompt)
+            .user(userPrompt)
+            .stream()
+            .chatResponse()
+            .doOnNext(chunk -> {
+                var usage = chunk.getMetadata() != null ? chunk.getMetadata().getUsage() : null;
+                if (usage != null) {
+                    log.info("[Token] 流式多文档问答 | 输入：{} | 输出：{} | 总计：{}",
+                            usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+                }
+            })
+            .map(chunk -> {
+                var result = chunk.getResult();
+                if (result != null && result.getOutput() != null) {
+                    return result.getOutput().getText();
+                }
+                return "";  // 无内容的 chunk 返回空串
+            })
+            .filter(text -> !text.isEmpty())  // 过滤掉空串，避免前端收到多余空事件
+            .onErrorReturn("AI 服务暂时不可用，请稍后重试");
     }
 }
