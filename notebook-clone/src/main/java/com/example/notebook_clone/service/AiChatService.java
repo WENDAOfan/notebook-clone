@@ -3,9 +3,13 @@ package com.example.notebook_clone.service;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import reactor.core.publisher.Flux;  //day23"推送式"的数据流
+import reactor.core.publisher.Mono;
 import lombok.extern.slf4j.Slf4j;//Lombok 自动生成 log 对象，让你能写 log.info(...)
 import org.springframework.ai.chat.model.ChatResponse;//替代 String 接收 AI 返回值，包含文本 + Token 信息
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.retry.annotation.Backoff;//@Retryable 的退避参数（等多久、间隔倍数）
 import org.springframework.retry.annotation.Recover;//标记兜底方法——重试全部失败后自动调用
 import org.springframework.retry.annotation.Retryable;//标记方法为可重试
@@ -260,13 +264,15 @@ public class AiChatService {
         return userPrompt;
     }
     // 4. 流式方法 A：单文档
-    public Flux<String> askBasedOnDocumentStream(
+    public Flux<ServerSentEvent<String>> askBasedOnDocumentStream(
             String documentContent, String question, boolean useDocumentContext) {
         
         // 文档截断逻辑（和同步一样）
         // 空文档判断 → return Flux.just("...");
         if ((documentContent == null || documentContent.trim().isEmpty()) && useDocumentContext) {
-            return Flux.just("文档内容为空，无法回答问题。");  // 空文档判断
+            return Flux.just(ServerSentEvent.<String>builder()
+                    .data("文档内容为空，无法回答问题。")
+                    .build());  // 空文档判断
         }
         String context = documentContent != null && documentContent.length() > 8000
                 ? documentContent.substring(0, 8000) + "\n...（内容已截断）"
@@ -275,7 +281,9 @@ public class AiChatService {
         String systemPrompt = buildSingleDocSystemPrompt(useDocumentContext);
         String userPrompt = buildSingleDocUserPrompt(context, question, useDocumentContext);
         
-        return chatClient.prompt()
+        AtomicReference<Usage> usageRef = new AtomicReference<>();
+        
+        Flux<ServerSentEvent<String>> contentFlux = chatClient.prompt()
             .system(systemPrompt)
             .user(userPrompt)
             .stream()
@@ -283,6 +291,7 @@ public class AiChatService {
             .doOnNext(chunk -> {
                 var usage = chunk.getMetadata() != null ? chunk.getMetadata().getUsage() : null;
                 if (usage != null) {
+                    usageRef.set(usage);
                     log.info("[Token] 流式单文档问答 | 输入：{} | 输出：{} | 总计：{}",
                             usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
                 }
@@ -295,17 +304,35 @@ public class AiChatService {
                 return "";  // 无内容的 chunk 返回空串
             })
             .filter(text -> !text.isEmpty())  // 过滤掉空串，避免前端收到多余空事件
-            .onErrorReturn("AI 服务暂时不可用，请稍后重试");
+            .map(text -> ServerSentEvent.<String>builder().data(text).build())
+            .onErrorResume(e -> Flux.just(ServerSentEvent.<String>builder()
+                    .data("AI 服务暂时不可用，请稍后重试")
+                    .build()));
+        
+        return contentFlux.concatWith(Mono.fromCallable(() -> {
+            Usage usage = usageRef.get();
+            if (usage != null) {
+                String json = String.format("{\"prompt\":%d,\"completion\":%d,\"total\":%d}",
+                        usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+                return ServerSentEvent.<String>builder()
+                        .event("token-usage")
+                        .data(json)
+                        .build();
+            }
+            return null;
+        }).filter(java.util.Objects::nonNull));
     }
     // 5. 流式方法 B：多文档
-    public Flux<String> askBasedOnDocumentsStream(
+    public Flux<ServerSentEvent<String>> askBasedOnDocumentsStream(
             List<String[]> documents, String question) {
         
         // 空文档判断 → return Flux.just("...");
         // 文档拼接逻辑（和同步一样）
                 // 如果没有文档
         if (documents == null || documents.isEmpty()) {
-            return Flux.just("该笔记本下没有文档，无法回答问题。");//注意！流式返回 Flux.just(...)
+            return Flux.just(ServerSentEvent.<String>builder()
+                    .data("该笔记本下没有文档，无法回答问题。")
+                    .build());//注意！流式返回 Flux.just(...)
         }
 
         // 拼接所有文档内容，每篇标注标题
@@ -343,7 +370,9 @@ public class AiChatService {
         }
         String context = contextBuilder.toString();
         if (context.isEmpty()) {
-        return Flux.just("该笔记本下的文档内容均为空，无法回答问题。");
+        return Flux.just(ServerSentEvent.<String>builder()
+                .data("该笔记本下的文档内容均为空，无法回答问题。")
+                .build());
         }
         if (truncated) {
             context += "\n...（更多文档内容因长度限制未纳入上下文）";
@@ -351,7 +380,9 @@ public class AiChatService {
         String systemPrompt = buildMultiDocSystemPrompt();
         String userPrompt = buildMultiDocUserPrompt(context, question);
         
-        return chatClient.prompt()
+        AtomicReference<Usage> usageRef = new AtomicReference<>();
+        
+        Flux<ServerSentEvent<String>> contentFlux = chatClient.prompt()
             .system(systemPrompt)
             .user(userPrompt)
             .stream()
@@ -359,6 +390,7 @@ public class AiChatService {
             .doOnNext(chunk -> {
                 var usage = chunk.getMetadata() != null ? chunk.getMetadata().getUsage() : null;
                 if (usage != null) {
+                    usageRef.set(usage);
                     log.info("[Token] 流式多文档问答 | 输入：{} | 输出：{} | 总计：{}",
                             usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
                 }
@@ -371,6 +403,22 @@ public class AiChatService {
                 return "";  // 无内容的 chunk 返回空串
             })
             .filter(text -> !text.isEmpty())  // 过滤掉空串，避免前端收到多余空事件
-            .onErrorReturn("AI 服务暂时不可用，请稍后重试");
+            .map(text -> ServerSentEvent.<String>builder().data(text).build())
+            .onErrorResume(e -> Flux.just(ServerSentEvent.<String>builder()
+                    .data("AI 服务暂时不可用，请稍后重试")
+                    .build()));
+        
+        return contentFlux.concatWith(Mono.fromCallable(() -> {
+            Usage usage = usageRef.get();
+            if (usage != null) {
+                String json = String.format("{\"prompt\":%d,\"completion\":%d,\"total\":%d}",
+                        usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+                return ServerSentEvent.<String>builder()
+                        .event("token-usage")
+                        .data(json)
+                        .build();
+            }
+            return null;
+        }).filter(java.util.Objects::nonNull));
     }
 }

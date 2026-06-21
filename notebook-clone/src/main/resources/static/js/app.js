@@ -4,6 +4,7 @@ let currentNotebookId = null;
 let currentDocuments = [];
 let currentUser = null;
 let authToken = null;
+window.sessionTokenTotal = 0; // Day 26: 当前会话 Token 累计
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -303,7 +304,8 @@ async function askNotebookAPI(notebookId, question) {
 }
 
 // Day 23-5: SSE 流式请求封装（使用 fetch + ReadableStream，支持自定义 Header）
-async function fetchStream(url, params, onChunk, onError) {
+// Day 26 增强：支持 event: token-usage 自定义事件
+async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
     const queryString = new URLSearchParams(params).toString();
     const fullUrl = `${API_BASE}${url}${queryString ? '?' + queryString : ''}`;
 
@@ -327,6 +329,38 @@ async function fetchStream(url, params, onChunk, onError) {
     let buffer = '';
     let receivedData = false;
 
+    function processBuffer() {
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop(); // 最后一个块可能不完整，保留到下次
+
+        for (const block of blocks) {
+            const lines = block.split('\n');
+            let eventName = 'message';
+            let data = '';
+
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    eventName = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    data += line.slice(5).trim();
+                }
+            }
+
+            if (!data) continue;
+
+            if (eventName === 'token-usage') {
+                try {
+                    const usage = JSON.parse(data);
+                    if (onTokenUsage) onTokenUsage(usage);
+                } catch (e) {
+                    console.warn('token-usage 解析失败:', data);
+                }
+            } else {
+                onChunk(data);
+            }
+        }
+    }
+
     try {
         while (true) {
             let done, value;
@@ -341,18 +375,7 @@ async function fetchStream(url, params, onChunk, onError) {
             receivedData = true;
 
             buffer += decoder.decode(value, { stream: true });
-
-            const lines = buffer.split('\n');
-            buffer = lines.pop();
-
-            for (const line of lines) {
-                if (line.startsWith('data:')) {
-                    const data = line.slice(5).trim();
-                    if (data) {
-                        onChunk(data);
-                    }
-                }
-            }
+            processBuffer();
         }
     } finally {
         reader.releaseLock();
@@ -360,26 +383,26 @@ async function fetchStream(url, params, onChunk, onError) {
 
     // 刷新 decoder 内部缓冲区中残留的数据
     buffer += decoder.decode();
-
-    if (buffer.startsWith('data:')) {
-        const data = buffer.slice(5).trim();
-        if (data) onChunk(data);
+    if (buffer.trim()) {
+        processBuffer();
     }
 }
 
-function askDocumentStreamAPI(documentId, question, useDocumentContext, onChunk) {
+function askDocumentStreamAPI(documentId, question, useDocumentContext, onChunk, onTokenUsage) {
     return fetchStream(
         `/api/documents/${documentId}/ask/stream`,
         { question, useDocumentContext },
-        onChunk
+        onChunk,
+        onTokenUsage
     );
 }
 
-function askNotebookStreamAPI(notebookId, question, onChunk) {
+function askNotebookStreamAPI(notebookId, question, onChunk, onTokenUsage) {
     return fetchStream(
         `/api/notebooks/${notebookId}/ask/stream`,
         { question },
-        onChunk
+        onChunk,
+        onTokenUsage
     );
 }
 
@@ -698,13 +721,18 @@ async function askDocument() {
     const answerWrapper = document.getElementById('qaAnswer');
     const answerEl = document.getElementById('qaAnswerText');
     const indicator = document.getElementById('qaStreamIndicator');
+    const tokenUsageEl = document.getElementById('qaTokenUsage');
 
     answerWrapper.style.display = 'block';
     answerEl.value = '';
+    tokenUsageEl.style.display = 'none';
+    tokenUsageEl.innerHTML = '';
     indicator.style.display = 'inline';
     answerEl.classList.add('streaming');
 
     showToast('AI 正在思考...', 'info');
+
+    let currentUsage = null;
 
     try {
         await askDocumentStreamAPI(
@@ -714,6 +742,9 @@ async function askDocument() {
             (chunk) => {
                 answerEl.value += chunk;
                 answerEl.scrollTop = answerEl.scrollHeight;
+            },
+            (usage) => {
+                currentUsage = usage;
             }
         );
 
@@ -733,6 +764,11 @@ async function askDocument() {
             answerEl.value = answer;
             const citationContainer = document.getElementById('qaCitations');
             renderCitationCards(citations, citationContainer);
+        }
+
+        if (currentUsage) {
+            renderTokenUsageCard('qaTokenUsage', currentUsage);
+            accumulateSessionTokens(currentUsage.total);
         }
     }
 }
@@ -761,6 +797,54 @@ function resetNotebookQA() {
     if (answerText) answerText.value = '';
 }
 
+// Day 26: Token 用量卡片渲染
+function renderTokenUsageCard(containerId, usage) {
+    const container = document.getElementById(containerId);
+    if (!container || !usage) return;
+    const cost = (usage.total * 0.0015 / 1000).toFixed(4);
+    container.innerHTML = `
+        <div class="token-usage-card">
+            <span class="token-usage-icon">📊</span>
+            <span class="token-usage-text">Token | 输入：${usage.prompt} | 输出：${usage.completion} | 总计：${usage.total}</span>
+            <span class="token-usage-cost">💰 约 ¥${cost}</span>
+        </div>
+    `;
+    container.style.display = 'block';
+}
+
+// Day 26: 会话 Token 累计
+function accumulateSessionTokens(tokens) {
+    window.sessionTokenTotal += tokens;
+    updateSessionTotalDisplay();
+}
+
+function updateSessionTotalDisplay() {
+    const el = document.getElementById('sessionTotalTokens');
+    if (el) {
+        el.textContent = window.sessionTokenTotal.toLocaleString() + ' tokens';
+    }
+}
+
+// Day 26: 右侧功能面板 Tab 切换
+function switchRightPanelTab(tabName) {
+    const userSettingsTab = document.getElementById('userSettingsTab');
+    const consoleTab = document.getElementById('consoleTab');
+    const tabUserSettings = document.getElementById('tabUserSettings');
+    const tabConsole = document.getElementById('tabConsole');
+
+    if (tabName === 'userSettings') {
+        userSettingsTab.style.display = 'block';
+        consoleTab.style.display = 'none';
+        tabUserSettings.classList.add('active');
+        tabConsole.classList.remove('active');
+    } else {
+        userSettingsTab.style.display = 'none';
+        consoleTab.style.display = 'block';
+        tabUserSettings.classList.remove('active');
+        tabConsole.classList.add('active');
+    }
+}
+
 async function askNotebook() {
     const input = document.getElementById('notebookQAInput');
     const question = input.value.trim();
@@ -773,13 +857,18 @@ async function askNotebook() {
     const answerWrapper = document.getElementById('notebookQAAnswer');
     const answerEl = document.getElementById('notebookQAAnswerText');
     const indicator = document.getElementById('notebookStreamIndicator');
+    const tokenUsageEl = document.getElementById('notebookTokenUsage');
 
     answerWrapper.style.display = 'block';
     answerEl.value = '';
+    tokenUsageEl.style.display = 'none';
+    tokenUsageEl.innerHTML = '';
     indicator.style.display = 'inline';
     answerEl.classList.add('streaming');
 
     showToast('AI 正在综合多篇文档思考...', 'info');
+
+    let currentUsage = null;
 
     try {
         await askNotebookStreamAPI(
@@ -788,6 +877,9 @@ async function askNotebook() {
             (chunk) => {
                 answerEl.value += chunk;
                 answerEl.scrollTop = answerEl.scrollHeight;
+            },
+            (usage) => {
+                currentUsage = usage;
             }
         );
 
@@ -806,6 +898,11 @@ async function askNotebook() {
             answerEl.value = answer;
             const citationContainer = document.getElementById('notebookCitations');
             renderCitationCards(citations, citationContainer);
+        }
+
+        if (currentUsage) {
+            renderTokenUsageCard('notebookTokenUsage', currentUsage);
+            accumulateSessionTokens(currentUsage.total);
         }
     }
 }

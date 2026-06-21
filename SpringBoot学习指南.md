@@ -44,6 +44,8 @@
    - [14. AI 流式输出 SSE 打字机效果（Day 23）](#toc-ai-sse-streaming)
    - [15. AI 引用溯源 — 标注引用来源（Day 24）](#toc-ai-citation)
    - [16. @Async 异步摘要 + 前端轮询（Day 25）](#toc-async-summary)
+   - [17. AI 调用健壮化：重试机制 @Retryable（Day 26）](#toc-ai-retry)
+   - [18. AI 调用健壮化：Token 统计全覆盖（Day 26_5）](#toc-ai-token)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -3731,6 +3733,253 @@ CSS 呼吸动画：
 
 ---
 
+<a id="toc-ai-retry"></a>
+### 17. AI 调用健壮化：重试机制 @Retryable（Day 26）
+
+> 核心目标：给 AI 调用加上自动重试保护——网络抖动不再导致摘要或问答丢失。
+
+#### 17.1 对外部依赖"不信任"原则
+
+AI API 是外部服务，有三个不可：不可靠、不可控、不可见。应在调用前加防御层。
+
+```
+你的代码
+   ↓
+┌── 防御层 ──────────────────────────┐
+│ ① 重试机制   → 失败了再试几次       │
+│ ② Token 统计 → 每次调用都记一笔     │
+└────────────────────────────────────┘
+   ↓
+DeepSeek API（外部，不可信）
+```
+
+#### 17.2 什么该重试，什么不该
+
+| 错误场景 | HTTP 状态码 | 是否重试 | 原因 |
+|:---|:---|:---|:---|
+| 网络超时 | 无响应 | ✅ 重试 | 网络抖动是暂时的 |
+| 服务器挂了 | 500/502/503 | ✅ 重试 | 服务器暂时过载 |
+| 请求频率太高 | 429 | ⚠️ 延迟重试 | 立即重试会让限流更严重 |
+| 参数有问题 | 400 | ❌ 不重试 | 重试 100 次也是错 |
+| API Key 无效 | 401 | ❌ 不重试 | 配置问题 |
+
+#### 17.3 退避策略：为什么越等越久
+
+```
+请求 1：发送 → 超时
+         ↓ 等 1.5 秒（给服务器喘息时间）
+请求 2：发送 → 还是超时
+         ↓ 等 2.25 秒（问题严重，等更久）
+请求 3：发送 → 还是失败
+         ↓ 不试了，调 @Recover 兜底
+```
+
+公式：`第 N 次重试等待 = delay × multiplier^(N-1)`
+
+#### 17.4 Maven 依赖
+
+```xml
+<dependency>
+    <groupId>org.springframework.retry</groupId>
+    <artifactId>spring-retry</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-aop</artifactId>
+</dependency>
+```
+
+**为什么需要 AOP 依赖？** `@Retryable` 和 `@Async` 一样，底层靠 Spring AOP 代理实现，不加不生效。
+
+#### 17.5 启动类加 @EnableRetry
+
+```java
+@SpringBootApplication
+@EnableAsync
+@EnableRetry  // 开启重试支持
+public class NotebookCloneApplication { ... }
+```
+
+#### 17.6 改造 AiSummaryService — @Retryable + @Recover
+
+```java
+@Slf4j
+@Service
+public class AiSummaryService {
+
+    private final ChatClient chatClient;
+
+    @Retryable(
+        retryFor = {RestClientException.class},
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1500, multiplier = 1.5)
+    )
+    public String generateSummary(String content) {
+        if (content == null || content.trim().length() < 50) {
+            return "内容过短，无需摘要";
+        }
+        // ... 截断逻辑 ...
+
+        ChatResponse chatResponse = chatClient.prompt()
+                .system(...)
+                .user(...)
+                .call()
+                .chatResponse();  // ← 改用 chatResponse() 拿 Token
+
+        String summary = chatResponse.getResult().getOutput().getText();
+
+        // Token 日志
+        var usage = chatResponse.getMetadata().getUsage();
+        if (usage != null) {
+            log.info("[Token] 摘要生成 | 输入: {} | 输出: {} | 总计: {}",
+                usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+        }
+        return summary;
+    }
+
+    @Recover
+    public String generateSummaryRecover(RestClientException e, String content) {
+        log.error("[重试] 摘要生成失败，已重试 3 次: {}", e.getMessage());
+        return "摘要生成失败，请稍后重试";
+    }
+}
+```
+
+#### 17.7 @Recover 签名规则
+
+- 必须和 `@Retryable` 方法在同一个类里
+- 第一个参数是触发重试的异常类型
+- 后面所有参数（类型 + 顺序）和返回值类型必须和 `@Retryable` 方法一致
+
+#### 17.8 核心注解对照
+
+| 注解 | 作用 |
+|:---|:---|
+| `@EnableRetry` | 启动类开启重试支持 |
+| `@Retryable(retryFor=..., maxAttempts=..., backoff=...)` | 标记方法为可重试 |
+| `@Backoff(delay=, multiplier=)` | 退避策略：等多久、间隔倍数 |
+| `@Recover` | 全部重试失败后的兜底方法 |
+| `RestClientException` | Spring HTTP 调用异常，作为重试触发条件 |
+
+#### 17.9 常见踩坑
+
+| 问题 | 原因 | 解决 |
+|:---|:---|:---|
+| `@Retryable` 不生效 | 没加 `@EnableRetry` 或没引入 AOP 依赖 | 两者缺一不可 |
+| `@Recover` 没被调用 | 返回值类型或参数不匹配 | 确保签名一致 |
+| `.chatResponse()` 找不到方法 | Spring AI 版本差异 | 确认版本 >= 1.0 |
+
+---
+
+<a id="toc-ai-token"></a>
+### 18. AI 调用健壮化：Token 统计全覆盖（Day 26_5）
+
+> 核心目标：将重试 + Token 统计从摘要扩展到所有问答方法，包括流式方法。
+
+#### 18.1 改造前后对比
+
+**改造前（Day 26 刚完成时）**：
+
+| AI 调用场景 | 重试保护 | Token 统计 |
+|:---|:---|:---|
+| 摘要生成 `AiSummaryService` | ✅ | ✅ |
+| 同步单文档问答 | ❌ | ❌ |
+| 同步多文档问答 | ❌ | ❌ |
+| 流式单文档问答 | ❌ | ❌ |
+| 流式多文档问答 | ❌ | ❌ |
+
+**改造后（Day 26_5 完成）**：
+
+| AI 调用场景 | 重试保护 | Token 统计 |
+|:---|:---|:---|
+| 摘要生成 | ✅ `@Retryable` | ✅ `.chatResponse()` |
+| 同步单文档问答 | ✅ `@Retryable` | ✅ `.chatResponse()` |
+| 同步多文档问答 | ✅ `@Retryable` | ✅ `.chatResponse()` |
+| 流式单文档问答 | ❌ 前端兜底 | ✅ `.stream().chatResponse()` + `.doOnNext()` |
+| 流式多文档问答 | ❌ 前端兜底 | ✅ `.stream().chatResponse()` + `.doOnNext()` |
+
+#### 18.2 同步方法改造（照搬 Day 26 方案）
+
+`askBasedOnDocument` 和 `askBasedOnDocuments` 的改法和 `generateSummary` 完全一样：加 `@Retryable` + `.call().chatResponse()` 替代 `.call().content()` + Token 日志 + `@Recover` 兜底。
+
+#### 18.3 流式方法的特殊性
+
+**同步方法**用 `.call().chatResponse()` 拿到完整 `ChatResponse`，直接取 `Usage`。
+
+**流式方法**用 `.stream().content()` 返回 `Flux<String>`——不断吐出文字片段的数据流，不包含 `Usage` 元数据。
+
+**解决方案**：`.stream().chatResponse()` 替代 `.stream().content()`
+
+```java
+return chatClient.prompt()
+        .system(systemPrompt)
+        .user(userPrompt)
+        .stream()
+        .chatResponse()          // ← 返回 Flux<ChatResponse>
+        .doOnNext(chunk -> {     // 每个 chunk 都进这里
+            var usage = chunk.getMetadata() != null
+                ? chunk.getMetadata().getUsage() : null;
+            if (usage != null) { // 只有最后一个 chunk 的 usage 不为 null
+                log.info("[Token] 流式... | 输入: {} | 输出: {} | 总计: {}",
+                    usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+            }
+        })
+        .map(chunk -> {          // 还原为 Flux<String>，前端无感
+            var result = chunk.getResult();
+            if (result != null && result.getOutput() != null) {
+                return result.getOutput().getText();
+            }
+            return "";
+        })
+        .filter(text -> !text.isEmpty())
+        .onErrorReturn("AI 服务暂时不可用，请稍后重试");
+```
+
+**为什么只用 `.onErrorReturn()` 而不是 `.retryWhen()`？** 流式重试会导致前端重复显示文字——AI 已经推了半截回答，网络断了重试会从头再推一遍。
+
+#### 18.4 为什么流式方法不用 @Retryable
+
+`@Retryable` 只能捕获**方法执行时**抛出的异常。流式方法立即返回 `Flux` 对象，真正的 HTTP 请求在 Flux 被订阅后才发生——此时方法早已返回，异常通过 Flux 的 error 信号传播，`@Retryable` 看不到。
+
+#### 18.5 典型 Token 消耗对比
+
+完成 Day 26_5 后可以在日志中观察到：
+
+```
+[Token] 摘要生成    | 输入: 461   | 输出: 88   | 总计: 549     ← 很省
+[Token] 单文档问答  | 输入: 3200  | 输出: 520  | 总计: 3720    ← 问答费多了
+[Token] 多文档问答  | 输入: 15000 | 输出: 680  | 总计: 15680   ← 最费
+```
+
+#### 18.6 改动文件一览
+
+| 文件 | 改动 |
+|:---|:---|
+| `pom.xml` | `spring-retry` + `spring-boot-starter-aop` |
+| `NotebookCloneApplication.java` | `@EnableRetry` |
+| `AiSummaryService.java` | `@Retryable` + `@Recover` + `.chatResponse()` + Token 日志 |
+| `AiChatService.java` — 同步方法 | `@Retryable` + `@Recover` + `.chatResponse()` + Token 日志 |
+| `AiChatService.java` — 流式方法 | `.stream().chatResponse()` + `.doOnNext()` + Token 日志 + `.onErrorReturn()` |
+
+#### 18.7 Day 26 完成标志自查
+
+- [ ] 理解"对外部依赖不信任"的架构思维
+- [ ] 理解哪些异常该重试（超时/5xx）、哪些不该（400/401）
+- [ ] 理解退避策略（backoff + multiplier）
+- [ ] 理解 `@Recover` 兜底机制和签名规则
+- [ ] `spring-retry` + `spring-boot-starter-aop` 依赖已添加
+- [ ] `@EnableRetry` 已加到启动类
+- [ ] `AiSummaryService.generateSummary()` 加了 `@Retryable` + Token 日志
+- [ ] `AiChatService` 两个同步方法加了 `@Retryable` + Token 日志
+- [ ] `AiChatService` 两个流式方法加了 `.chatResponse()` + Token 日志 + `.onErrorReturn()`
+- [ ] 理解为什么流式方法不能用 `@Retryable`（Flux 的异步特性）
+- [ ] 理解为什么流式方法不加重试（重复内容风险），只用 `.onErrorReturn()` 兜底
+- [ ] Token 日志覆盖了所有 AI 调用场景（摘要 + 单文档问答 + 多文档问答 + 流式）
+- [ ] 测试上传文档后日志出现 `[Token] 摘要生成`
+- [ ] 测试流式问答后日志出现 `[Token] 流式单文档问答` 或 `[Token] 流式多文档问答`
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -3747,7 +3996,10 @@ CSS 呼吸动画：
 | `@Entity` | 数据库实体 | Entity 类 |
 | `@Table(name = "xxx")` | 指定表名 | Entity 类 |
 | `@Configuration` | 配置类 | Config 类 |
-| `@EnableWebSecurity` | 启用 Spring Security Web 安全功能 | Config 类 |
+| `@EnableWebSecurity` | 启用 Spring Security | Config 类 |
+| `@EnableAsync` | 开启异步支持（Day 25） | 启动类 / Config 类 |
+| `@EnableRetry` | 开启重试支持（Day 26） | 启动类 |
+| `@Slf4j` | Lombok 自动生成 Logger | 任何类 |
 | `@RestControllerAdvice` | 全局异常处理 | ExceptionHandler 类 |
 
 <a id="toc-method-annotations"></a>
@@ -3762,6 +4014,10 @@ CSS 呼吸动画：
 | `@RequestMapping` | 通用映射 | 任意 |
 | `@ExceptionHandler` | 处理特定异常 | - |
 | `@Bean` | 注册 Spring Bean | Config 方法 |
+| `@Async("poolName")` | 异步执行方法，使用指定线程池（Day 25） | Service 方法 |
+| `@Retryable(retryFor=..., maxAttempts=..., backoff=...)` | 失败自动重试（Day 26） | Service 方法 |
+| `@Recover` | 重试全部失败后的兜底方法（Day 26） | Service 方法 |
+| `@Backoff(delay=, multiplier=)` | 重试退避策略（Day 26） | `@Retryable` 参数 |
 
 <a id="toc-field-annotations"></a>
 ### 字段/参数注解
@@ -3825,3 +4081,284 @@ CSS 呼吸动画：
 > - 2026-04-27：新增第 13 章 笔记本级多文档智能问答（Day 22）：多文档上下文拼接策略、50000 字宽松截断上限、List<String[]> 参数设计、NotebookController 新增 /{id}/ask 接口、前端渐变卡片式问答面板、三种截断策略对比
 > - 2026-04-28：新增第 14 章 AI 流式输出 SSE 打字机效果（Day 23）：SSE vs WebSocket 认知、Flux<String> 响应式基础、Service 层抽取私有方法 + 新增流式方法、Controller 层三个流式端点、 produces = TEXT_EVENT_STREAM_VALUE、中文乱码修复、api.http SSE 测试
 > - 2026-04-30：新增第 15 章 AI 引用溯源（Day 24）：Prompt 工程实现引用标记 [N]、前后端引用格式约定、parseCitations 分割解析逻辑、renderCitationCards 卡片渲染、单文档标题自动填充、优雅降级设计
+
+> - 2026-05-14：新增第 16 章 前端 Token 用量显示与页面布局改造（Day 26）：SSE 自定义事件 `event: token-usage` 传递 Token 用量、`ServerSentEvent<T>` 返回类型改造、`Flux.concatWith` 流末尾追加事件、前端 SSE 事件块解析增强、Token 用量卡片独立渲染、会话级 Token 累计（方案 A：纯前端内存）、页面布局改造（右侧功能面板 + Tab 切换）、`.app` 去掉 `max-width` 实现横向铺满
+
+---
+
+## 第 16 章：前端 Token 用量显示与页面布局改造（Day 26）
+
+### 16.1 需求背景
+
+流式问答完成后，用户看不到这次调用消耗了多少 Token。需要：
+1. 把 Token 用量从后端传到前端，**独立显示**（不混在 AI 回答正文里）。
+2. 改造页面布局，主内容左移，右侧新增功能面板。
+3. 右侧面板显示**当前会话**的累计 Token 用量（刷新清零，不持久化）。
+
+### 16.2 核心方案：SSE 自定义事件
+
+**问题**：流式响应开始后无法修改 HTTP 响应头，不能把 Token 放在 Header 里传。
+
+**解决**：SSE 支持自定义事件类型。在流末尾追加一个 `event: token-usage` 的事件：
+
+```
+data: AI 回答的最后一段文字...
+
+event: token-usage
+data: {"prompt":3200,"completion":520,"total":3720}
+```
+
+前端用 `fetch + ReadableStream` 手动解析 SSE，识别到 `event: token-usage` 就单独处理。
+
+### 16.3 后端实现
+
+#### 16.3.1 Service 层改造
+
+**返回类型变更**：`Flux<String>` → `Flux<ServerSentEvent<String>>`
+
+```java
+import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.ai.chat.metadata.Usage;
+import java.util.concurrent.atomic.AtomicReference;
+
+public Flux<ServerSentEvent<String>> askBasedOnDocumentStream(...) {
+    // ... 校验和 Prompt 构建 ...
+    
+    AtomicReference<Usage> usageRef = new AtomicReference<>();
+    
+    Flux<ServerSentEvent<String>> contentFlux = chatClient.prompt()
+        .system(systemPrompt)
+        .user(userPrompt)
+        .stream()
+        .chatResponse()
+        .doOnNext(chunk -> {
+            var usage = chunk.getMetadata() != null ? chunk.getMetadata().getUsage() : null;
+            if (usage != null) {
+                usageRef.set(usage);  // 暂存最后一个 chunk 的 usage
+                log.info("[Token] 输入：{} | 输出：{} | 总计：{}",
+                    usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens());
+            }
+        })
+        .map(chunk -> {
+            var result = chunk.getResult();
+            if (result != null && result.getOutput() != null) {
+                return result.getOutput().getText();
+            }
+            return "";
+        })
+        .filter(text -> !text.isEmpty())
+        .map(text -> ServerSentEvent.<String>builder().data(text).build())
+        .onErrorResume(e -> Flux.just(
+            ServerSentEvent.<String>builder().data("AI 服务暂时不可用").build()
+        ));
+    
+    // 在内容流末尾追加 token-usage 事件
+    return contentFlux.concatWith(Mono.fromCallable(() -> {
+        Usage usage = usageRef.get();
+        if (usage != null) {
+            String json = String.format(
+                "{\"prompt\":%d,\"completion\":%d,\"total\":%d}",
+                usage.getPromptTokens(), usage.getCompletionTokens(), usage.getTotalTokens()
+            );
+            return ServerSentEvent.<String>builder()
+                    .event("token-usage")
+                    .data(json)
+                    .build();
+        }
+        return null;
+    }).filter(Objects::nonNull));
+}
+```
+
+**关键点**：
+- `AtomicReference<Usage>` 暂存最后一个 chunk 的 usage（只有最后一个 chunk 有值）。
+- `.concatWith()` 在内容流**彻底结束后**追加 token-usage 事件。
+- 如果模型没返回 usage，不追加事件，前端静默跳过。
+
+#### 16.3.2 Controller 层适配
+
+```java
+@GetMapping(value = "/{id}/ask/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+public Flux<ServerSentEvent<String>> askDocumentStream(...) {
+    // 校验分支也要包装成 ServerSentEvent
+    if (question == null || question.trim().isEmpty()) {
+        return Flux.just(ServerSentEvent.<String>builder()
+                .data("问题不能为空").build());
+    }
+    // ...
+    return aiChatService.askBasedOnDocumentStream(...);
+}
+```
+
+**注意**：所有 `return Flux.just("字符串")` 都要改成 `Flux.just(ServerSentEvent.<String>builder().data("字符串").build())`，否则类型不匹配。
+
+### 16.4 前端实现
+
+#### 16.4.1 SSE 解析增强
+
+原来的 `fetchStream()` 按行扫描，只识别 `data:`。现在需要按**SSE 事件块**（以 `\n\n` 分隔）解析，区分 `event:` 和 `data:`：
+
+```javascript
+async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
+    // ... fetch 请求 ...
+    
+    function processBuffer() {
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop(); // 保留不完整的块
+        
+        for (const block of blocks) {
+            const lines = block.split('\n');
+            let eventName = 'message';
+            let data = '';
+            
+            for (const line of lines) {
+                if (line.startsWith('event:')) {
+                    eventName = line.slice(6).trim();
+                } else if (line.startsWith('data:')) {
+                    data += line.slice(5).trim();
+                }
+            }
+            
+            if (!data) continue;
+            
+            if (eventName === 'token-usage') {
+                try {
+                    const usage = JSON.parse(data);
+                    if (onTokenUsage) onTokenUsage(usage);
+                } catch (e) {
+                    console.warn('token-usage 解析失败:', data);
+                }
+            } else {
+                onChunk(data);
+            }
+        }
+    }
+    
+    // 在 while 循环中：buffer += decoder.decode(value, { stream: true });
+    // 然后调用 processBuffer();
+}
+```
+
+#### 16.4.2 Token 用量卡片渲染
+
+```javascript
+function renderTokenUsageCard(containerId, usage) {
+    const container = document.getElementById(containerId);
+    if (!container || !usage) return;
+    const cost = (usage.total * 0.0015 / 1000).toFixed(4);
+    container.innerHTML = `
+        <div class="token-usage-card">
+            <span class="token-usage-icon">📊</span>
+            <span class="token-usage-text">
+                Token | 输入：${usage.prompt} | 输出：${usage.completion} | 总计：${usage.total}
+            </span>
+            <span class="token-usage-cost">💰 约 ¥${cost}</span>
+        </div>
+    `;
+    container.style.display = 'block';
+}
+```
+
+调用时机：流结束后 `finally` 块中，如果收到了 `currentUsage` 就渲染。
+
+#### 16.4.3 会话 Token 累计（方案 A）
+
+```javascript
+window.sessionTokenTotal = 0; // 页面加载时初始化
+
+function accumulateSessionTokens(tokens) {
+    window.sessionTokenTotal += tokens;
+    updateSessionTotalDisplay();
+}
+
+function updateSessionTotalDisplay() {
+    const el = document.getElementById('sessionTotalTokens');
+    if (el) {
+        el.textContent = window.sessionTokenTotal.toLocaleString() + ' tokens';
+    }
+}
+```
+
+**特点**：纯前端内存累计，刷新页面清零。不依赖后端存储。
+
+### 16.5 页面布局改造
+
+#### 16.5.1 目标
+
+去掉 `.app` 的 `max-width: 1400px` 和 `margin: 0 auto`，让内容横向铺满屏幕。右侧新增 300px 功能面板。
+
+#### 16.5.2 HTML 结构
+
+```html
+<div class="main-container">
+    <aside class="sidebar">...</aside>
+    <main class="content">...</main>
+    <aside class="right-panel">
+        <div class="right-panel-tabs">
+            <button class="tab-btn active" onclick="switchRightPanelTab('userSettings')">
+                用户设置
+            </button>
+            <button class="tab-btn" onclick="switchRightPanelTab('console')">
+                功能台
+            </button>
+        </div>
+        <div class="right-panel-content">
+            <div id="userSettingsTab" class="tab-panel active">
+                <h3>⚙️ 用户设置</h3>
+                <div class="token-stat-box">
+                    <div class="token-stat-label">本次会话总用量</div>
+                    <div class="token-stat-value" id="sessionTotalTokens">0 tokens</div>
+                </div>
+            </div>
+            <div id="consoleTab" class="tab-panel" style="display: none;">
+                <h3>🛠️ 功能台</h3>
+                <p>功能开发中，敬请期待...</p>
+            </div>
+        </div>
+    </aside>
+</div>
+```
+
+#### 16.5.3 Tab 切换逻辑
+
+```javascript
+function switchRightPanelTab(tabName) {
+    const userSettingsTab = document.getElementById('userSettingsTab');
+    const consoleTab = document.getElementById('consoleTab');
+    const tabUserSettings = document.getElementById('tabUserSettings');
+    const tabConsole = document.getElementById('tabConsole');
+
+    if (tabName === 'userSettings') {
+        userSettingsTab.style.display = 'block';
+        consoleTab.style.display = 'none';
+        tabUserSettings.classList.add('active');
+        tabConsole.classList.remove('active');
+    } else {
+        userSettingsTab.style.display = 'none';
+        consoleTab.style.display = 'block';
+        tabUserSettings.classList.remove('active');
+        tabConsole.classList.add('active');
+    }
+}
+```
+
+### 16.6 改动文件清单
+
+| 文件 | 改动 |
+|:---|:---|
+| `AiChatService.java` | 两个流式方法返回 `Flux<ServerSentEvent<String>>`，末尾追加 `token-usage` 事件 |
+| `DocumentController.java` | 流式接口返回类型适配，错误分支包装 `ServerSentEvent` |
+| `NotebookController.java` | 同上 |
+| `index.html` | 问答区增加 Token 容器；`.main-container` 增加 `.right-panel` |
+| `style.css` | `.app` 去掉居中限制；新增右侧面板、Token 卡片样式 |
+| `app.js` | SSE 事件块解析、`onTokenUsage` 回调、Token 卡片渲染、会话累计、Tab 切换 |
+
+### 16.7 常见坑
+
+| 坑 | 原因 | 解决 |
+|:---|:---|:---|
+| `Type mismatch: cannot convert from Flux<String> to Flux<ServerSentEvent<String>>` | Controller 校验分支返回了裸字符串 `Flux.just("...")` | 全部改成 `Flux.just(ServerSentEvent.<String>builder().data("...").build())` |
+| 前端收不到 token-usage | SSE 解析还是按行扫描，没按事件块分割 | 重写解析逻辑，按 `\n\n` 分割事件块 |
+| 模型没返回 usage | 某些 provider 流式结尾不带 usage | 加 null 检查，不返回时不推事件，前端静默跳过 |
+
+---

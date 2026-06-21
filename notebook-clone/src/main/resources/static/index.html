@@ -138,6 +138,7 @@
                                 </div>
                                 <textarea id="notebookQAAnswerText" class="notebook-qa-answertext" readonly rows="8"></textarea>
                                 <div id="notebookCitations" class="citations-container" style="display: none;"></div>
+                                <div id="notebookTokenUsage" class="token-usage-container" style="display: none;"></div>
                             </div>
                         </div>
                     </div>
@@ -149,6 +150,27 @@
                     </div>
                 </div>
             </main>
+
+            <!-- 右侧功能面板 -->
+            <aside class="right-panel">
+                <div class="right-panel-tabs">
+                    <button class="tab-btn active" onclick="switchRightPanelTab('userSettings')" id="tabUserSettings">用户设置</button>
+                    <button class="tab-btn" onclick="switchRightPanelTab('console')" id="tabConsole">功能台</button>
+                </div>
+                <div class="right-panel-content">
+                    <div id="userSettingsTab" class="tab-panel active">
+                        <h3 class="panel-title">⚙️ 用户设置</h3>
+                        <div class="token-stat-box">
+                            <div class="token-stat-label">本次会话总用量</div>
+                            <div class="token-stat-value" id="sessionTotalTokens">0 tokens</div>
+                        </div>
+                    </div>
+                    <div id="consoleTab" class="tab-panel" style="display: none;">
+                        <h3 class="panel-title">🛠️ 功能台</h3>
+                        <p class="panel-placeholder">功能开发中，敬请期待...</p>
+                    </div>
+                </div>
+            </aside>
         </div>
     </div>
 
@@ -268,6 +290,7 @@
                         </div>
                         <textarea id="qaAnswerText" class="qa-answer-text" readonly rows="8"></textarea>
                         <div id="qaCitations" class="citations-container" style="display: none;"></div>
+                        <div id="qaTokenUsage" class="token-usage-container" style="display: none;"></div>
                     </div>
                 </div>
             </div>
