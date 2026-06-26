@@ -46,4 +46,8 @@ public class Document {
     // =========================================
     private LocalDateTime createTime;
 
+    // ===== Day 29 新增：文档分块数量（用于删除时清理向量库）=====
+    private Integer chunkCount;
+    // ============================================================
+
 }

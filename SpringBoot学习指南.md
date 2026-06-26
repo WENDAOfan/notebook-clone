@@ -46,6 +46,9 @@
    - [16. @Async 异步摘要 + 前端轮询（Day 25）](#toc-async-summary)
    - [17. AI 调用健壮化：重试机制 @Retryable（Day 26）](#toc-ai-retry)
    - [18. AI 调用健壮化：Token 统计全覆盖（Day 26_5）](#toc-ai-token)
+   - [19. PDF 文本提取与清洗 + 混合输入（Day 27）](#toc-pdf-extract)
+   - [20. 文本分块 + 向量化（Day 28）](#toc-chunk-vector)
+   - [21. RAG 检索增强问答 + 引用溯源（Day 29）](#toc-rag-qa)
 5. [常用注解速查表](#toc-step5)
    - [类级别注解](#toc-class-annotations)
    - [方法级别注解](#toc-method-annotations)
@@ -64,6 +67,8 @@ notebook-clone/
 │   ├── controller/                      ← 【控制器层】接收 HTTP 请求
 │   │   ├── AuthController.java          ← 登录/注册/获取当前用户接口
 │   │   ├── TestController.java          ← 测试接口（验证JWT认证）
+│   │   ├── TestAiController.java        ← AI 测试接口（Day 19）
+│   │   ├── ChunkTestController.java     ← 分块+搜索测试接口（Day 28）
 │   │   ├── DocumentController.java      ← 文档相关接口
 │   │   ├── NotebookController.java      ← 笔记本相关接口
 │   │   └── UserController.java          ← 用户相关接口
@@ -72,7 +77,8 @@ notebook-clone/
 │   │   ├── AiChatService.java           ← AI 问答服务（单文档 + 多文档 + 流式）
 │   │   ├── AiSummaryService.java        ← AI 摘要生成服务
 │   │   ├── AsyncSummaryService.java     ← 异步摘要生成（@Async，Day 25）
-│   │   └── DocumentExtractService.java  ← 文档内容提取
+│   │   ├── DocumentExtractService.java  ← 文档内容提取 + 文本清洗（Day 27）
+│   │   └── DocumentChunkService.java    ← 文本分块 + 向量化（Day 28）
 │   ├── repository/                      ← 【数据层】数据库操作
 │   │   ├── DocumentRepository.java      ← 文档数据访问
 │   │   ├── NotebookRepository.java      ← 笔记本数据访问
@@ -85,7 +91,8 @@ notebook-clone/
 │   │   └── JwtAuthenticationFilter.java ← JWT认证过滤器（验证Token）
 │   ├── config/                          ← 【配置层】Spring 配置
 │   │   ├── SecurityConfig.java          ← 安全配置（密码加密、权限、过滤器链）
-│   │   └── AsyncConfig.java             ← 异步线程池配置（@EnableAsync，Day 25）
+│   │   ├── AsyncConfig.java             ← 异步线程池配置（@EnableAsync，Day 25）
+│   │   └── VectorStoreConfig.java       ← 向量存储 + Embedding 模型配置（Day 28）
 │   ├── util/                            ← 【工具层】工具类
 │   │   └── JwtUtil.java                 ← JWT Token 生成/校验工具
 │   └── common/                          ← 【公共层】通用工具
@@ -3980,6 +3987,767 @@ return chatClient.prompt()
 
 ---
 
+<a id="toc-pdf-extract"></a>
+### 19. PDF 文本提取与清洗 + 混合输入（Day 27）
+
+> 核心目标：让文档上传支持"文本 + 文件"混合输入，并对提取的文本做清洗（去水印、去噪声），为后续 RAG 提供干净输入。
+
+#### 19.1 为什么需要文本清洗
+
+PDF/Word 提取出的"原文"并不干净，直接存库会污染后续 RAG 分块质量：
+
+```
+PDF 提取常见问题：
+  1. 控制字符（NUL \x00、退格 \x08 等）→ PDF 内部编码残留
+  2. 连续大量空行 → PDF 页面间距被转成换行
+  3. 水印文本 → "S e c r e t @ L e v e l" 每个字符间带空格
+  4. 每页重复的页眉页脚 → 同一行出现几十次
+```
+
+#### 19.2 cleanText() 清洗管线
+
+在 `DocumentExtractService` 中新增 `cleanText()` 方法，在 `extractText()` 返回前统一调用：
+
+```java
+private String cleanText(String raw) {
+    // 第一步：去除控制字符（保留换行\n、回车\r、制表符\t）
+    String cleaned = raw.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", "");
+    // 第二步：连续3个以上换行合并为2个
+    cleaned = cleaned.replaceAll("\\n{3,}", "\n\n");
+    // 第三步：过滤PDF水印行（字符间大量空格）
+    cleaned = removeWatermarkLines(cleaned);
+    // 第四步：去除重复出现3次以上的行（每页重复的水印、页眉页脚）
+    cleaned = removeRepeatedLines(cleaned);
+    // 第五步：每行首尾空白去除
+    cleaned = Arrays.stream(cleaned.split("\\n", -1))
+            .map(String::strip)
+            .collect(Collectors.joining("\n"));
+    return cleaned.trim();
+}
+```
+
+**五步流水线**的设计思路：每一步解决一类噪声，互不干扰，便于后续单独调优。
+
+#### 19.3 水印行过滤原理
+
+PDF 中的水印层每个字符单独定位（坐标级别），PDFBox 逐字提取时会在字符之间插入空格：
+
+```
+正常文本："卫星通信资源调度"       → 空格占比 < 5%
+水印文本："S e c r e t @ L e v e l" → 空格占比 > 50%
+```
+
+```java
+private boolean isWatermarkLine(String line) {
+    String trimmed = line.strip();
+    if (trimmed.length() < 12) return false;  // 太短的不是水印
+    long spaceCount = trimmed.chars().filter(c -> c == ' ').count();
+    double spaceRatio = (double) spaceCount / trimmed.length();
+    return spaceRatio > 0.4;  // 空格占比超过40% → 大概率是水印
+}
+```
+
+**为什么阈值选 0.4？** 正常中英文混合文本空格占比通常不到 20%，水印文本可达 50%+。0.4 是一个保守的中间值，几乎不会误伤正文。
+
+#### 19.4 重复行去重原理
+
+学位论文的水印在每一页都重复出现，页眉页脚也是。如果同一行文本在全文中出现 3 次以上，大概率不是正文：
+
+```java
+private String removeRepeatedLines(String text) {
+    // 1. 统计每行出现次数（忽略空行）
+    Map<String, Long> lineCounts = Arrays.stream(text.split("\\n"))
+            .filter(line -> !line.strip().isEmpty())
+            .collect(Collectors.groupingBy(String::strip, Collectors.counting()));
+    // 2. 过滤掉出现 ≥ 3 次的行
+    return Arrays.stream(text.split("\\n", -1))
+            .filter(line -> {
+                String stripped = line.strip();
+                if (stripped.isEmpty()) return true;  // 保留空行
+                return lineCounts.getOrDefault(stripped, 0L) < 3;
+            })
+            .collect(Collectors.joining("\\n"));
+}
+```
+
+**注意**：这里用 `Collectors.groupingBy` + `Collectors.counting()` 做频率统计，是 Java Stream API 的经典用法。
+
+#### 19.5 PDF 提取开启位置排序
+
+PDFBox 默认按 PDF 内容流顺序提取文本（不一定是视觉顺序）。加上 `setSortByPosition(true)` 后按坐标排序，减少水印/页眉混入正文：
+
+```java
+private String extractFromPdf(MultipartFile file) throws IOException {
+    try (PDDocument document = Loader.loadPDF(file.getBytes())) {
+        PDFTextStripper stripper = new PDFTextStripper();
+        stripper.setSortByPosition(true);  // ← 按视觉位置排序
+        stripper.setStartPage(1);
+        stripper.setEndPage(document.getNumberOfPages());
+        return stripper.getText(document);
+    }
+}
+```
+
+#### 19.6 混合输入：upload 端点支持 additionalContent
+
+用户可能同时输入文本（笔记/备注）和上传文件（原始材料）。upload 端点新增可选参数：
+
+```java
+@PostMapping("/upload")
+public Result<Document> uploadDocumentFile(
+        @RequestParam("notebookId") Long notebookId,
+        @RequestParam("file") MultipartFile file,
+        @RequestParam(value = "additionalContent", required = false)
+                String additionalContent  // ← Day 27 新增
+) {
+    String extractedText = extractService.extractText(file);
+    // 合并用户手动输入 + 文件提取文本
+    String finalContent = mergeContent(extractedText, additionalContent);
+    // ...
+}
+```
+
+**内容合并策略**：手动内容放前面（用户的笔记），文件文本放后面（原始材料），用 `---` 分隔：
+
+```java
+private String mergeContent(String fileText, String additionalContent) {
+    if (additionalContent == null || additionalContent.isBlank()) {
+        return fileText;
+    }
+    return additionalContent.trim() + "\n\n---\n\n" + fileText;
+}
+```
+
+#### 19.7 文件上传大小限制
+
+Spring Boot 默认 multipart 上传限制 **1MB**（单文件）/ **10MB**（整个请求）。PDF 经常超限，需要改配置：
+
+```properties
+# ===== Day 27：文件上传大小限制 =====
+spring.servlet.multipart.max-file-size=50MB
+spring.servlet.multipart.max-request-size=50MB
+```
+
+#### 19.8 已知局限
+
+| 局限 | 原因 | 影响 |
+|:---|:---|:---|
+| 封面/扉页 □ 替换字符 | 装饰字体编码无法映射 Unicode | 正文不受影响，AI 摘要正常 |
+| 扫描版 PDF 提取为空 | PDFBox 只能提取文字型 PDF | 返回提示文本，不会崩溃 |
+| 繁体字映射（如"密級"） | PDF 字体编码映射结果 | 提取层无法修复 |
+
+#### 19.9 改动文件一览
+
+| 文件 | 改动 |
+|:---|:---|
+| `DocumentExtractService.java` | 新增 `cleanText()`、`removeWatermarkLines()`、`removeRepeatedLines()`、PDF 异常兜底、`setSortByPosition(true)` |
+| `DocumentController.java` | upload 端点加 `additionalContent` 参数 + `mergeContent()`，catch 扩大到 Exception |
+| `application.properties` | 加 `max-file-size=50MB` 和 `max-request-size=50MB` |
+| `index.html` | 选项卡改复选框，两区域可同时显示 |
+| `style.css` | 复选框样式替换选项卡样式 |
+| `app.js` | `createDocument()` 三种模式，`uploadDocumentFileAPI` 支持额外文本 |
+
+#### 19.10 常见坑
+
+| 坑 | 原因 | 解决 |
+|:---|:---|:---|
+| PDF 上传报 "Maximum upload size exceeded" | Spring Boot 默认 multipart 限制 1MB | `application.properties` 加 `max-file-size=50MB` |
+| PDF 上传报 "Failed to fetch" | PDFBox 抛非 IO 异常，controller catch 只接 IOException | catch 扩大到 Exception + 服务层加 try-catch 兜底 |
+| 提取文本含 "S e c r e t..." 水印 | PDFBox 逐字提取水印层，字符间插入空格 | `removeWatermarkLines()` 过滤空格占比 > 40% 的行 |
+| 每页重复的页眉页脚混入正文 | PDFBox 不区分正文和页眉 | `removeRepeatedLines()` 去除出现 3 次以上的行 |
+
+#### 19.11 Day 27 完成标志自查
+
+- [ ] 理解为什么需要文本清洗（PDF 提取的噪声会影响 RAG 分块质量）
+- [ ] 理解 `cleanText()` 五步流水线的设计思路
+- [ ] 理解水印过滤的启发式算法（空格占比 > 40%）
+- [ ] 理解重复行去重的逻辑（`Collectors.groupingBy` + `counting()`）
+- [ ] 理解 `setSortByPosition(true)` 的作用（按视觉位置排序）
+- [ ] `DocumentExtractService` 已加 `cleanText()` 管线
+- [ ] `DocumentController` upload 端点支持 `additionalContent` 参数
+- [ ] `application.properties` 加了文件上传大小限制
+- [ ] 前端选项卡改复选框，支持混合输入
+- [ ] 测试上传 PDF 后提取文本不含水印和重复行
+
+---
+
+<a id="toc-chunk-vector"></a>
+### 20. 文本分块 + 向量化（Day 28）
+
+> 核心目标：把 Day 27 提取的干净文本切成小块（chunks），用 Embedding 模型生成向量，存入向量存储。这是 RAG 管线中"索引"阶段的完整实现。
+
+#### 20.1 为什么要分块
+
+Day 27 完成后，文档以完整文本存在 MySQL。但当前 AI 问答的做法是把整篇文档塞进 prompt：
+
+```
+问题：
+  全文塞进 prompt → Token 超限 / 噪声太多 / Token 浪费
+
+解决：
+  切成小块 → 提问时只检索最相关的几个块 → 精准上下文 + Token 省 90%
+```
+
+#### 20.2 分块策略对比
+
+| 策略 | 做法 | 优缺点 |
+|:---|:---|:---|
+| **固定长度** | 每 500 字符切一刀 | 简单粗暴，可能在句子中间断开 |
+| **按段落** | 按 `\n\n` 切 | 保留语义完整性，但段落长度不一 |
+| **Token 分块** | 按 Token 数量切（如 512 Token），带重叠 | 最常用的平衡方案 ✅ |
+| **语义分块** | 用 Embedding 检测语义边界 | 效果最好，但计算成本高 |
+
+**Day 28 使用 Token 分块 + 重叠**，Spring AI 内置支持（`TokenTextSplitter`），也是 RAG 实践中最常用的起点。
+
+#### 20.3 重叠（Overlap）为什么重要
+
+```
+不重叠：
+  块 1: "切片技术是一种网络虚拟化方法，它将物理网络..."
+  块 2: "资源划分为多个逻辑切片，每个切片独立管理..."
+                    ↑
+         "它"指什么？块 2 丢失了上下文
+
+重叠 50 Token：
+  块 1: "...它将物理网络划分为多个逻辑"
+  块 2: "划分为多个逻辑切片，每个切片独立管理..."
+              ↑
+     重叠部分保留了上下文衔接
+```
+
+#### 20.4 Embedding 的核心思想
+
+Embedding 把文本变成一个高维向量（如 2048 维的浮点数数组）。语义相近的文本，向量在空间中的距离也近：
+
+```
+"卫星通信资源调度"  → [0.82, 0.15, 0.73, ..., 0.41]  (2048维)
+"GEO卫星波束分配"  → [0.79, 0.18, 0.71, ..., 0.38]  ← 语义相近，距离小
+"今天天气不错"      → [0.02, 0.91, 0.05, ..., 0.87]  ← 语义无关，距离大
+```
+
+**RAG 的完整检索流程**：
+
+```
+索引阶段（Day 28）：
+  文档 → 分块 → 每个块调 Embedding 模型 → 生成向量 → 存入向量存储
+
+检索阶段（Day 29）：
+  用户问题 → 调同一个 Embedding 模型 → 生成问题向量
+           → 在向量存储中找最相似的 Top-K 个块
+           → 把这 K 个块拼进 prompt 给 LLM
+```
+
+#### 20.5 双模型架构：DeepSeek 聊天 + 智谱 AI Embedding
+
+当前项目用 DeepSeek 做聊天，但 **DeepSeek 不提供 Embedding API**。所以 Embedding 需要单独指向智谱 AI：
+
+```
+Chat      → DeepSeek（spring.ai.openai.base-url → api.deepseek.com）
+Embedding → 智谱 AI（zhipuai.embedding.base-url → open.bigmodel.cn）
+```
+
+两个模型各管各的，通过 `VectorStoreConfig` 单独配置 Embedding Bean。
+
+#### 20.6 Maven 依赖
+
+```xml
+<!-- Day 28 新增：文本分块工具（内含 TokenTextSplitter） -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-tika-document-reader</artifactId>
+</dependency>
+<!-- Day 28 新增：向量存储（SimpleVectorStore 等） -->
+<dependency>
+    <groupId>org.springframework.ai</groupId>
+    <artifactId>spring-ai-vector-store</artifactId>
+</dependency>
+```
+
+**为什么需要单独加 `spring-ai-vector-store`？** `spring-ai-starter-model-openai` 只包含聊天相关的类，`VectorStore` 和 `SimpleVectorStore` 在独立的 artifact 里。
+
+#### 20.7 Embedding 配置（VectorStoreConfig.java）
+
+```java
+@Configuration
+public class VectorStoreConfig {
+
+    @Value("${zhipuai.embedding.api-key}")
+    private String apiKey;
+    @Value("${zhipuai.embedding.base-url}")
+    private String baseUrl;
+    @Value("${zhipuai.embedding.model}")
+    private String model;
+
+    /**
+     * 创建智谱 AI 的 Embedding 模型
+     * 使用 OpenAI 兼容格式调用智谱的 /v1/embeddings 接口
+     */
+    @Bean
+    public EmbeddingModel embeddingModel() {
+        OpenAiApi openAiApi = OpenAiApi.builder()
+                .baseUrl(baseUrl)
+                .apiKey(apiKey)
+                .build();
+        return new OpenAiEmbeddingModel(openAiApi);
+    }
+
+    /**
+     * 创建内存向量存储（开发阶段用，重启后数据丢失）
+     */
+    @Bean
+    public VectorStore vectorStore(EmbeddingModel embeddingModel) {
+        return SimpleVectorStore.builder(embeddingModel).build();
+    }
+}
+```
+
+**为什么不复用 spring.ai.openai 的配置？** 因为 `spring.ai.openai.*` 已经指向 DeepSeek（用于聊天），智谱 AI 是不同的服务端点。两个 Bean 各用各的 `OpenAiApi` 实例，互不干扰。
+
+对应的 `application.properties` 配置：
+
+```properties
+# ===== Day 28：智谱 AI Embedding 配置 =====
+zhipuai.embedding.base-url=https://open.bigmodel.cn/api/paas
+zhipuai.embedding.api-key=your-api-key
+zhipuai.embedding.model=embedding-3
+```
+
+**注意**：`base-url` 不要带 `/v4`，因为 OpenAI 客户端会自动拼 `/v1/embeddings`。如果写了 `/v4`，最终请求路径会变成 `/v4/v1/embeddings`（404）。
+
+#### 20.8 分块 + 向量化服务（DocumentChunkService.java）
+
+```java
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class DocumentChunkService {
+
+    private final VectorStore vectorStore;
+    private final DocumentRepository documentRepository;
+
+    @Async("aiTaskExecutor")
+    public void chunkAndStoreAsync(Long documentId) {
+        try {
+            log.info("[分块] 开始处理文档 ID: {}", documentId);
+
+            // 1. 从数据库重新读取文档（异步线程中的实体可能已过期）
+            Document document = documentRepository.findById(documentId).orElse(null);
+            if (document == null) {
+                log.warn("[分块] 文档不存在，跳过 | ID: {}", documentId);
+                return;
+            }
+
+            String content = document.getContent();
+            if (content == null || content.isBlank()) {
+                log.info("[分块] 文档内容为空，跳过 | 标题: {}", document.getTitle());
+                return;
+            }
+
+            // 2. 分块：使用默认参数（512 Token / 块，50 Token 重叠）
+            TokenTextSplitter splitter = new TokenTextSplitter();
+            org.springframework.ai.document.Document sourceDoc =
+                    new org.springframework.ai.document.Document(content);
+            List<org.springframework.ai.document.Document> chunks =
+                    splitter.apply(List.of(sourceDoc));
+
+            // 3. 给每个块附加元数据（Day 29 检索时用来溯源）
+            List<org.springframework.ai.document.Document> enrichedChunks =
+                    chunks.stream().map(chunk -> {
+                        Map<String, Object> metadata = new HashMap<>(chunk.getMetadata());
+                        metadata.put("documentId", documentId);
+                        metadata.put("documentTitle", document.getTitle());
+                        return new org.springframework.ai.document.Document(
+                                chunk.getText(), metadata);
+                    }).collect(Collectors.toList());
+
+            // 4. 存入向量存储（内部自动调 Embedding API 生成向量）
+            vectorStore.add(enrichedChunks);
+
+            log.info("[分块] 完成 | 文档: {} | 共 {} 块",
+                    document.getTitle(), enrichedChunks.size());
+        } catch (Exception e) {
+            log.error("[分块] 处理失败 | 文档 ID: {} | 错误: {}",
+                    documentId, e.getMessage(), e);
+        }
+    }
+}
+```
+
+**几个设计要点**：
+
+- **`@Async("aiTaskExecutor")`**：和 `AsyncSummaryService` 一样复用已有的异步线程池，不阻塞上传响应。
+- **从数据库重新读取**：异步线程执行时，Controller 返回的实体可能已过期或被 Hibernate 会话关闭，必须重新查。
+- **全限定名 `org.springframework.ai.document.Document`**：因为项目已有 `com.example.notebook_clone.entity.Document` 实体类，Java 不支持 `import ... as ...`，只能用全限定名避免冲突。
+- **元数据 `documentId` / `documentTitle`**：Day 29 做检索时，用这些元数据追溯分块属于哪篇文档。
+
+#### 20.9 上传时触发分块
+
+在 `DocumentController.uploadDocumentFile` 末尾，摘要生成之后加入分块调用：
+
+```java
+Document saved = documentRepository.save(document);
+asyncSummaryService.generateSummaryAsync(saved.getId());   // Day 25
+documentChunkService.chunkAndStoreAsync(saved.getId());    // Day 28 新增
+return Result.success(saved);
+```
+
+两个异步任务（摘要 + 分块）**并行执行**，互不阻塞。
+
+#### 20.10 测试接口（ChunkTestController.java）
+
+```java
+@RestController
+@RequestMapping("/test/chunk")
+public class ChunkTestController {
+
+    private final DocumentChunkService documentChunkService;
+    private final VectorStore vectorStore;
+
+    /** 手动触发文档分块 */
+    @GetMapping("/{documentId}")
+    public Result<String> triggerChunk(@PathVariable Long documentId) {
+        documentChunkService.chunkAndStoreAsync(documentId);
+        return Result.success("分块任务已提交，请查看控制台日志确认完成");
+    }
+
+    /** 测试向量相似度搜索 */
+    @GetMapping("/search")
+    public Result<List<Map<String, Object>>> search(
+            @RequestParam String query,
+            @RequestParam(defaultValue = "3") int topK) {
+        List<org.springframework.ai.document.Document> results =
+                vectorStore.similaritySearch(SearchRequest.builder()
+                        .query(query).topK(topK).build());
+        // ... 返回截断文本 + 元数据 + 相似度分数 ...
+    }
+}
+```
+
+`/test/**` 路径在 `SecurityConfig` 中已放行，无需 JWT。
+
+#### 20.11 改动文件一览
+
+| 文件 | 改动 |
+|:---|:---|
+| `pom.xml` | 加 `spring-ai-tika-document-reader` + `spring-ai-vector-store` |
+| `application.properties` | 加智谱 AI Embedding 配置（base-url、api-key、model） |
+| `VectorStoreConfig.java` | **新建** — EmbeddingModel + SimpleVectorStore Bean |
+| `DocumentChunkService.java` | **新建** — 异步分块 + 向量化 + 元数据注入 |
+| `ChunkTestController.java` | **新建** — 手动触发分块 + 相似度搜索测试 |
+| `DocumentController.java` | 注入 `DocumentChunkService`，上传后触发分块 |
+
+#### 20.12 常见坑
+
+| 坑 | 原因 | 解决 |
+|:---|:---|:---|
+| `VectorStore` / `SimpleVectorStore` 找不到类 | `spring-ai-starter-model-openai` 不含向量存储类 | 额外加 `spring-ai-vector-store` 依赖 |
+| Embedding API 404，路径 `/v4/v1/embeddings` | base-url 带了 `/v4`，OpenAI 客户端又拼了 `/v1/` | base-url 改为不带版本号的地址 |
+| Java `import X as Y` 语法报错 | Java 不支持 import 别名 | 用全限定名 `org.springframework.ai.document.Document` |
+| 分块阻塞上传接口 | 没有用 `@Async` | 加 `@Async("aiTaskExecutor")` 异步执行 |
+
+#### 20.13 Day 28 完成标志自查
+
+- [ ] 理解为什么要文本分块（全文塞 prompt 的三大问题）
+- [ ] 理解 Token 分块 + 重叠的策略（512 Token / 块，50 Token 重叠）
+- [ ] 理解 Embedding 的核心思想（文本 → 高维向量，语义相近则距离近）
+- [ ] 理解双模型架构（DeepSeek 聊天 + 智谱 AI Embedding 各管各的）
+- [ ] 理解为什么 base-url 不能带 `/v4`（OpenAI 客户端自动拼 `/v1/`）
+- [ ] 理解 Java 不支持 import 别名，用全限定名解决类名冲突
+- [ ] `VectorStoreConfig.java` 已创建，EmbeddingModel + SimpleVectorStore Bean 正常
+- [ ] `DocumentChunkService.java` 已创建，`@Async` 异步分块 + 向量化
+- [ ] `ChunkTestController.java` 已创建，测试搜索返回相关分块
+- [ ] `DocumentController` 上传后触发分块，控制台日志显示 `[分块] 完成`
+- [ ] 测试上传 PDF 后日志出现 `[分块] 完成 | 文档: xxx | 共 N 块`
+- [ ] 测试 `/test/chunk/search?query=关键词` 返回相关文本片段
+
+---
+
+<a id="toc-rag-qa"></a>
+### 21. RAG 检索增强问答 + 引用溯源（Day 29）
+
+> 核心目标：改造 AI 问答流程，用户提问时先从向量存储检索最相关的文档块，只把这些块送进 prompt。完成 RAG 的"检索 + 生成"阶段，实现 RAG 完整闭环。
+
+#### 21.1 RAG 三步走
+
+Day 28 完成了 R（Retrieve）的索引阶段，Day 29 补齐 A（Augment）和 G（Generate）：
+
+```
+R（Retrieve）：用户问题 → Embedding → 向量检索 → 找到最相关的 K 个文档块
+A（Augment）：把 K 个块 + 用户问题 + 系统指令 → 拼成增强 prompt
+G（Generate）：LLM 基于增强 prompt 生成回答
+```
+
+#### 21.2 RAG vs 全文塞入 prompt
+
+| | 全文塞入（Day 21-28） | RAG 检索（Day 29） |
+|:---|:---|:---|
+| Token 消耗 | 高（整篇文档） | 低（3-5 个块） |
+| 回答质量 | 噪声多，容易"走神" | 精准上下文，回答聚焦 |
+| 支持文档数 | 只能处理 1-2 篇 | 可跨几十篇文档检索 |
+| 延迟 | 长文档处理慢 | 检索快 + 短 prompt 生成快 |
+| 局限性 | 超出 Token 限制就截断 | 检索不到就答不上来 |
+
+#### 21.3 注入 VectorStore
+
+`AiChatService` 构造函数新增 `VectorStore` 参数：
+
+```java
+@Service
+public class AiChatService {
+
+    private final ChatClient chatClient;
+    private final VectorStore vectorStore;  // Day 29 新增
+
+    public AiChatService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore) {
+        this.chatClient = chatClientBuilder.build();
+        this.vectorStore = vectorStore;  // Day 29 新增
+    }
+}
+```
+
+`VectorStore` Bean 在 Day 28 的 `VectorStoreConfig` 中已创建，Spring 自动注入。
+
+#### 21.4 核心方法：retrieveRelevantChunks()
+
+新增私有方法，封装向量检索 + 来源标注：
+
+```java
+private List<String> retrieveRelevantChunks(String question, int topK) {
+    List<Document> results = vectorStore.similaritySearch(
+            SearchRequest.builder()
+                    .query(question)
+                    .topK(topK)
+                    .build());
+
+    List<String> chunksWithSource = new ArrayList<>();
+    for (int i = 0; i < results.size(); i++) {
+        Document doc = results.get(i);
+        String title = (String) doc.getMetadata()
+                .getOrDefault("documentTitle", "未知文档");
+        String source = String.format("[%d] 来源：%s\n%s",
+                i + 1, title, doc.getText());
+        chunksWithSource.add(source);
+    }
+    return chunksWithSource;
+}
+```
+
+**关键设计**：
+
+- **`SearchRequest.builder()`**：Spring AI 1.0.0 的搜索请求构建器，`.query()` 设置查询文本，`.topK()` 设置返回数量。
+- **来源标注 `[N] 来源：文档标题`**：利用 Day 28 存入的元数据 `documentTitle`，在每个块前面标注编号和来源，为后续 Prompt 引用做准备。
+
+#### 21.5 改造单文档问答
+
+```java
+public String askBasedOnDocument(String documentContent, String question,
+        boolean useDocumentContext) {
+
+    // ===== Day 29：RAG 检索替代全文塞入 =====
+    List<String> relevantChunks = retrieveRelevantChunks(question, 5);
+
+    String context;
+    if (relevantChunks.isEmpty()) {
+        // 降级：向量存储中还没有块（可能分块任务还没跑完），用全文截断
+        context = documentContent != null && documentContent.length() > 8000
+                ? documentContent.substring(0, 8000) + "\n...（内容已截断）"
+                : documentContent;
+    } else {
+        context = String.join("\n\n---\n\n", relevantChunks);
+    }
+    // ========================================
+
+    // Prompt 和调用不变，只是 context 从全文变成了检索到的块
+}
+```
+
+**优雅降级**：如果向量存储返回空（分块任务异步还没跑完、或者 SimpleVectorStore 重启后数据丢失），自动回退到全文截断模式，保证问答功能不受影响。
+
+#### 21.6 改造多文档问答 — RAG 的最大亮点
+
+笔记本级问答是 RAG 最有价值的场景——可以**跨文档检索**：
+
+```java
+public String askBasedOnDocuments(List<String[]> documents, String question) {
+
+    // ===== Day 29：用 RAG 替代"拼接所有文档" =====
+    List<String> relevantChunks = retrieveRelevantChunks(question, 8);
+
+    String context;
+    if (relevantChunks.isEmpty()) {
+        // 降级为旧逻辑：拼接所有文档（50000 字截断上限）
+        // ... 原来的拼接逻辑 ...
+    } else {
+        context = String.join("\n\n---\n\n", relevantChunks);
+    }
+    // ============================================
+}
+```
+
+**改造前**：把笔记本里所有文档拼成一个巨大字符串（可能超 Token 限制）。
+**改造后**：从向量存储里检索最相关的 8 个块（可能来自不同文档），精准且省 Token。
+
+#### 21.7 流式方法同步改造
+
+四个问答方法（同步单文档、同步多文档、流式单文档、流式多文档）都接入了 RAG。流式方法的改造和同步方法完全一样——在构建 prompt 之前插入 `retrieveRelevantChunks()` 调用，后续的 `.stream().chatResponse()` 不变：
+
+```java
+public Flux<ServerSentEvent<String>> askBasedOnDocumentStream(...) {
+    // ===== Day 29：RAG 检索（流式）=====
+    List<String> relevantChunks = retrieveRelevantChunks(question, 5);
+    String context = relevantChunks.isEmpty()
+            ? /* 降级全文截断 */ : String.join("\n\n---\n\n", relevantChunks);
+
+    // 复用私有方法构建 Prompt → 流式调用不变
+    String systemPrompt = buildSingleDocSystemPrompt(useDocumentContext);
+    String userPrompt = buildSingleDocUserPrompt(context, question, useDocumentContext);
+    // ... .stream().chatResponse() ...
+}
+```
+
+#### 21.8 Prompt 工程：引用溯源
+
+改造 System Prompt，要求 AI 在回答中标注来源：
+
+```
+你是一位知识库问答助手。请严格遵循以下规则：
+1. 只基于用户提供的【文档内容】回答问题
+2. 如果文档中没有相关信息，明确回答"根据文档内容，无法找到相关答案"
+3. 回答要简洁，控制在 300 字以内
+4. 不要添加文档中没有的信息
+5. 每段内容前面标注了 [N] 来源：文档标题，回答时如果引用了某段内容，
+   必须在引用处添加标记 [N]
+6. 回答末尾必须用 "---" 分隔，然后列出参考来源，每个引用独占一行，
+   格式为：[N] 【文档：标题】原文片段
+```
+
+**效果**：AI 回答中会出现 `[1]`、`[2]` 等引用标记，末尾附带来源列表，用户可以追溯答案出自哪个文档。
+
+#### 21.9 可预测的块 ID：buildChunkId()
+
+Day 28 的分块没有给每个块设置固定 ID。Day 29 需要按 ID 删除块（删除文档时），所以引入可预测的 ID 命名规则：
+
+```java
+private String buildChunkId(Long documentId, int chunkIndex) {
+    return String.format("doc:%d:chunk:%d", documentId, chunkIndex);
+}
+// 示例：doc:14:chunk:0, doc:14:chunk:1, doc:14:chunk:2 ...
+```
+
+**为什么要可预测？** 删除文档时需要知道该文档有哪些块的 ID。如果 ID 是随机 UUID，就无法拼出来。用 `doc:{id}:chunk:{index}` 格式，只要知道文档 ID 和块数量，就能生成所有块的 ID。
+
+#### 21.10 Document 实体新增 chunkCount 字段
+
+```java
+@Entity
+public class Document {
+    // ... 原有字段 ...
+
+    // Day 29 新增：记录分块数量，删除时用来生成块 ID 列表
+    private Integer chunkCount;
+}
+```
+
+分块完成后，`DocumentChunkService` 自动更新这个字段：
+
+```java
+// chunkAndStoreAsync() 末尾
+document.setChunkCount(enrichedChunks.size());
+documentRepository.save(document);
+```
+
+JPA 的 `ddl-auto=update` 会自动在数据库里加这个列。
+
+#### 21.11 删除文档时清理向量库
+
+```java
+public void deleteDocumentChunks(Long documentId) {
+    Document document = documentRepository.findById(documentId).orElse(null);
+    if (document == null) return;
+
+    Integer chunkCount = document.getChunkCount();
+    if (chunkCount == null || chunkCount == 0) return;
+
+    // 根据 chunkCount 生成所有块 ID，调 vectorStore.delete() 批量删除
+    List<String> chunkIds = IntStream.range(0, chunkCount)
+            .mapToObj(i -> buildChunkId(documentId, i))
+            .collect(Collectors.toList());
+
+    vectorStore.delete(chunkIds);
+}
+```
+
+`DocumentController.deleteDocument` 改为**先删向量、再删数据库**：
+
+```java
+// Day 29：先清理向量库中的分块（再删数据库文档）
+documentChunkService.deleteDocumentChunks(id);
+documentRepository.deleteById(id);
+```
+
+**为什么要先删向量？** 如果先删数据库记录，`chunkCount` 就查不到了，无法生成块 ID 来清理向量库。
+
+#### 21.12 重新索引
+
+文档内容更新时，先删旧块再建新块：
+
+```java
+@Async("aiTaskExecutor")
+public void reindexDocument(Long documentId) {
+    deleteDocumentChunks(documentId);
+    chunkAndStoreAsync(documentId);
+}
+```
+
+#### 21.13 改动文件一览
+
+| 文件 | 改动 |
+|:---|:---|
+| `AiChatService.java` | 注入 `VectorStore`，新增 `retrieveRelevantChunks()`，四个问答方法全部改用 RAG + 降级机制，System Prompt 加引用溯源要求 |
+| `DocumentChunkService.java` | 新增 `deleteDocumentChunks()`、`reindexDocument()`、`buildChunkId()`，分块时设置可预测 ID + 保存 `chunkCount` |
+| `Document.java` | 新增 `chunkCount` 字段 |
+| `DocumentController.java` | 删除文档时先调 `deleteDocumentChunks()` 再删数据库 |
+
+#### 21.14 常见坑
+
+| 坑 | 原因 | 解决 |
+|:---|:---|:---|
+| RAG 检索不到相关内容 | 问题表述和文档用词差异大，或 Embedding 模型中文效果一般 | 换一种问法；增大 Top-K；后续换中文专用 Embedding |
+| AI 回答中没出现引用标记 | Prompt 没有明确要求引用格式 | System Prompt 加第 5、6 条规则 |
+| 删除文档后仍能检索到 | 没调 `deleteDocumentChunks()`，或者 SimpleVectorStore 重启后 ID 对不上 | 删除时先清向量再删数据库 |
+| 新上传的文档检索不到 | 分块任务是异步的，还没跑完 | 等几秒，或看后端日志确认 `[分块] 完成` |
+| `chunkCount` 为 null | 老文档在 Day 29 之前上传，没有这个字段 | 手动调 `/test/chunk/{id}` 重新分块 |
+
+#### 21.15 RAG 完整管线回顾
+
+```
+Day 27: 文档上传 → 文本提取 + 清洗（cleanText 管线）
+Day 28: 文本分块 → Embedding 向量化 → 存入 VectorStore
+Day 29: 用户提问 → 向量检索 Top-K → 拼进 prompt → LLM 生成带引用的回答
+
+索引阶段（离线）：上传 → 提取 → 分块 → 向量化 → 存储
+检索阶段（在线）：提问 → 检索 → 增强 prompt → 生成 → 返回
+```
+
+#### 21.16 Day 29 完成标志自查
+
+- [ ] 理解 RAG 三步走（Retrieve → Augment → Generate）
+- [ ] 理解 RAG vs 全文塞入的优劣对比
+- [ ] 理解优雅降级机制（向量为空时回退全文截断）
+- [ ] 理解引用溯源的 Prompt 工程（`[N] 来源` 标注 + 末尾参考列表）
+- [ ] 理解可预测块 ID 的设计（`doc:{id}:chunk:{index}`）
+- [ ] 理解为什么要先删向量再删数据库（保留 chunkCount 用于生成 ID）
+- [ ] `AiChatService` 注入了 `VectorStore`，新增 `retrieveRelevantChunks()`
+- [ ] 四个问答方法（同步×2 + 流式×2）都接入了 RAG
+- [ ] `DocumentChunkService` 新增 `deleteDocumentChunks()` + `reindexDocument()`
+- [ ] `Document` 实体新增 `chunkCount` 字段
+- [ ] `DocumentController` 删除文档时先清向量库
+- [ ] 测试单文档问答：回答中出现 `[1]` 引用标记，Token 消耗明显降低
+- [ ] 测试多文档问答：回答能综合多篇文档的信息
+- [ ] 测试删除文档后，被删文档的内容不再出现在搜索结果中
+
+---
+
 <a id="toc-step5"></a>
 ## 第五步：常用注解速查表
 
@@ -4083,6 +4851,10 @@ return chatClient.prompt()
 > - 2026-04-30：新增第 15 章 AI 引用溯源（Day 24）：Prompt 工程实现引用标记 [N]、前后端引用格式约定、parseCitations 分割解析逻辑、renderCitationCards 卡片渲染、单文档标题自动填充、优雅降级设计
 
 > - 2026-05-14：新增第 16 章 前端 Token 用量显示与页面布局改造（Day 26）：SSE 自定义事件 `event: token-usage` 传递 Token 用量、`ServerSentEvent<T>` 返回类型改造、`Flux.concatWith` 流末尾追加事件、前端 SSE 事件块解析增强、Token 用量卡片独立渲染、会话级 Token 累计（方案 A：纯前端内存）、页面布局改造（右侧功能面板 + Tab 切换）、`.app` 去掉 `max-width` 实现横向铺满
+
+> - 2026-06-22：新增第 19 章 PDF 文本提取与清洗 + 混合输入（Day 27）：`cleanText()` 五步清洗管线、水印行过滤（空格占比启发式算法）、重复行去重（`Collectors.groupingBy` + `counting()`）、PDFBox `setSortByPosition(true)` 位置排序、upload 端点 `additionalContent` 混合输入参数、`mergeContent()` 内容合并策略、文件上传大小限制 50MB、前端选项卡改复选框
+> - 2026-06-22：新增第 20 章 文本分块 + 向量化（Day 28）：Token 分块策略 + 重叠原理、Embedding 向量化核心思想、双模型架构（DeepSeek 聊天 + 智谱 AI Embedding）、`VectorStoreConfig` 独立配置 EmbeddingModel + SimpleVectorStore、`DocumentChunkService` 异步分块 + 元数据注入、`ChunkTestController` 测试搜索、base-url 不带版本号的踩坑、Java 全限定名解决类名冲突
+> - 2026-06-23：新增第 21 章 RAG 检索增强问答 + 引用溯源（Day 29）：RAG 三步走（Retrieve → Augment → Generate）、`VectorStore` 注入 `AiChatService`、`retrieveRelevantChunks()` 向量检索 + 来源标注、四个问答方法全部改用 RAG + 优雅降级机制、System Prompt 引用溯源（`[N] 来源` 标注）、可预测块 ID `doc:{id}:chunk:{index}`、`Document.chunkCount` 字段、`deleteDocumentChunks()` 先删向量再删数据库、`reindexDocument()` 重新索引
 
 ---
 

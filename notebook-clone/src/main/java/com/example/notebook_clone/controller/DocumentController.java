@@ -5,7 +5,10 @@ import com.example.notebook_clone.repository.UserRepository;
 import com.example.notebook_clone.service.AiChatService;
 import com.example.notebook_clone.service.AiSummaryService;
 import com.example.notebook_clone.service.AsyncSummaryService;
+import com.example.notebook_clone.service.ChatHistoryService;  // Day 30 新增
 import com.example.notebook_clone.service.DocumentExtractService;
+import com.example.notebook_clone.service.DocumentChunkService;  // Day 28 新增
+import com.example.notebook_clone.entity.ChatMessage;  // Day 30 新增
 
 import org.springframework.security.core.context.SecurityContextHolder;
 
@@ -22,7 +25,6 @@ import java.util.List;
 import java.util.Optional;
 
 import org.springframework.web.multipart.MultipartFile;
-import java.nio.charset.StandardCharsets;
 import java.io.IOException;
 import jakarta.validation.Valid;
 import reactor.core.publisher.Flux;
@@ -44,7 +46,9 @@ public class DocumentController {
     private final AiSummaryService aiSummaryService;  // ← Day 20 新增
     private final AiChatService aiChatService;//← Day 21 新增
     private final AsyncSummaryService asyncSummaryService; //← Day 25 新增
-    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService,AiChatService aiChatService,AsyncSummaryService asyncSummaryService) {
+    private final DocumentChunkService documentChunkService; //← Day 28 新增
+    private final ChatHistoryService chatHistoryService; //← Day 30 新增
+    public DocumentController(DocumentRepository documentRepository, NotebookRepository notebookRepository,UserRepository userRepository,DocumentExtractService extractService,AiSummaryService aiSummaryService,AiChatService aiChatService,AsyncSummaryService asyncSummaryService,DocumentChunkService documentChunkService,ChatHistoryService chatHistoryService) {
         this.documentRepository = documentRepository;
         this.notebookRepository = notebookRepository;
         this.userRepository = userRepository; 
@@ -52,6 +56,8 @@ public class DocumentController {
         this.aiSummaryService = aiSummaryService;
         this.aiChatService = aiChatService;
         this.asyncSummaryService = asyncSummaryService;
+        this.documentChunkService = documentChunkService;  // Day 28 新增
+        this.chatHistoryService = chatHistoryService;  // Day 30 新增
     }
 
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
@@ -87,8 +93,8 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
         User currentUser = userRepository.findByUsername(username)
                 .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
 
-         // 2. 校验笔记本归属（门禁！）
-        Notebook notebook = notebookRepository.findByIdAndUserId(notebookId, currentUser.getId())
+        // 2. 校验笔记本归属（门禁！）
+        notebookRepository.findByIdAndUserId(notebookId, currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("笔记本不存在或无权访问"));
 
         // 调用我们刚才在 Repository 里写的魔法方法！
@@ -97,21 +103,19 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
     // 接口 3：上传文件并自动提取文字 (POST 请求)
     @PostMapping("/upload")
     public Result<Document> uploadDocumentFile(
-            @RequestParam("notebookId") Long notebookId, // 接收活页夹 ID
-            @RequestParam("file") MultipartFile file     // 接收上传的文件
+            @RequestParam("notebookId") Long notebookId,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam(value = "additionalContent", required = false) String additionalContent
     ) {
         try {
-            // 1. 获取文件的真实名字（比如：我的日记.txt）
             String fileName = file.getOriginalFilename();
 
-            // 2. 🌟 核心魔法：把文件里的内容，按照 UTF-8 编码读取成一段超长的 Java 字符串
-            //String extractedText = new String(file.getBytes(), StandardCharsets.UTF_8);
-            //交给专业的 Service 去处理
             String extractedText = extractService.extractText(file);
 
-            // 3. 把提取出来的文字，像之前一样存入数据库
+            // Day 27：合并用户手动输入 + 文件提取文本
+            String finalContent = mergeContent(extractedText, additionalContent);
+
             Document document = new Document();
-            //改造后
             String username = SecurityContextHolder.getContext()
                     .getAuthentication().getName();
             User currentUser = userRepository.findByUsername(username)
@@ -119,29 +123,32 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
             Notebook notebook = notebookRepository.findByIdAndUserId(notebookId, currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("笔记本不存在或无权操作"));
             
-            // // 把注释掉的 setNotebookId 改成：
             document.setNotebook(notebook);
-            
             document.setUser(currentUser);
-            // =========================================
-            notebook.getDocuments().add(document); // 同步双向关联
+            notebook.getDocuments().add(document);
             document.setTitle(fileName);
-            document.setContent(extractedText); // 把提取出来的几万字塞进去
+            document.setContent(finalContent);
             document.setCreateTime(LocalDateTime.now());
-            // ===== Day 20 新增：自动生成摘要 =====
-            // 注意：这是同步调用，会阻塞 2~5 秒！
-            //String summary = aiSummaryService.generateSummary(extractedText);
-            //document.setSummary(summary);
-            // ===== Day 25 新增：异步调用自动生成摘要 =====
-            document.setSummary("摘要生成中...");  // 先给占位符
-            Document saved = documentRepository.save(document);  // 先保存，获得 ID
-            asyncSummaryService.generateSummaryAsync(saved.getId());  // 异步生成，不等结果
-            return Result.success(saved);  // 立刻返回
+            document.setSummary("摘要生成中...");
+            Document saved = documentRepository.save(document);
+            asyncSummaryService.generateSummaryAsync(saved.getId());
+            documentChunkService.chunkAndStoreAsync(saved.getId());  // Day 28：异步分块并向量化
+            return Result.success(saved);
 
-        } catch (IOException e) {
-            // 如果读取文件失败，程序不能崩溃，要抛出异常报错
-            throw new RuntimeException("文件读取失败了！" + e.getMessage());
+        } catch (Exception e) {
+            throw new RuntimeException("文件上传失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 合并用户手动输入内容和文件提取文本
+     * 手动内容在前（笔记/备注），文件文本在后（原始材料），用分隔符连接
+     */
+    private String mergeContent(String fileText, String additionalContent) {
+        if (additionalContent == null || additionalContent.isBlank()) {
+            return fileText;
+        }
+        return additionalContent.trim() + "\n\n---\n\n" + fileText;
     }
     // 接口 4：撕毁某一张特定的资料纸 (DELETE 请求)
     // 路径例如：/api/documents/1 (代表删除 ID 为 1 的文档)
@@ -159,6 +166,10 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
         throw new RuntimeException("文档不存在或无权删除");
             }
         // 3. 校验通过，删除
+        // Day 29：先清理向量库中的分块（再删数据库文档）
+        documentChunkService.deleteDocumentChunks(id);
+        // Day 30：清空该文档的对话历史
+        chatHistoryService.clearDocHistory(id, currentUser.getId());
         documentRepository.deleteById(id);
         return Result.success(null);
     }
@@ -232,11 +243,13 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
                 ? request.getUseDocumentContext()
                 : true;
 
-        // 5. 调用 AI 基于文档内容回答问题
+        // 5. 调用 AI 基于文档内容回答问题（Day 30：传入 documentId 和 userId 用于对话历史）
         String answer = aiChatService.askBasedOnDocument(
                 document.getContent(),
                 request.getQuestion(),
-                useDocumentContext
+                useDocumentContext,
+                id,
+                currentUser.getId()
         );
         return Result.success(answer);
     }
@@ -264,11 +277,59 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
             return Flux.just(ServerSentEvent.<String>builder().data("无权访问该文档").build());
         }
         
-        // 4. 调用流式 Service 方法
+        // 4. 调用流式 Service 方法（Day 30：传入 documentId 和 userId 用于对话历史）
         return aiChatService.askBasedOnDocumentStream(
                 document.getContent(),
                 question,
-                useDocumentContext
+                useDocumentContext,
+                id,
+                currentUser.getId()
         );
+    }
+
+    // ===== Day 30 新增：对话历史查询/清空接口 =====
+
+    /**
+     * 查询某个文档的对话历史
+     */
+    @GetMapping("/{id}/chat/history")
+    public Result<List<ChatMessage>> getChatHistory(@PathVariable Long id) {
+        // 1. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+        // 2. 校验文档归属
+        Boolean exists = documentRepository.existsByIdAndUserId(id, currentUser.getId());
+        if (!exists) {
+            throw new RuntimeException("文档不存在或无权访问");
+        }
+
+        // 3. 返回对话历史
+        String sessionId = chatHistoryService.buildDocSessionId(id, currentUser.getId());
+        return Result.success(chatHistoryService.getHistory(sessionId));
+    }
+
+    /**
+     * 清空某个文档的对话历史
+     */
+    @DeleteMapping("/{id}/chat/history")
+    public Result<Void> clearChatHistory(@PathVariable Long id) {
+        // 1. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+        // 2. 校验文档归属
+        Boolean exists = documentRepository.existsByIdAndUserId(id, currentUser.getId());
+        if (!exists) {
+            throw new RuntimeException("文档不存在或无权操作");
+        }
+
+        // 3. 清空历史
+        chatHistoryService.clearDocHistory(id, currentUser.getId());
+        return Result.success(null);
     }
 }

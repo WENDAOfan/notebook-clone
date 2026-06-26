@@ -65,9 +65,6 @@
                 <h1>Notebook Clone</h1>
             </div>
             <div class="header-actions">
-                <button class="btn btn-primary" onclick="showCreateNotebookModal()">
-                    <span>+</span> 新建笔记本
-                </button>
                 <div class="user-menu">
                     <span class="user-name" id="currentUsername">用户</span>
                     <button class="btn btn-secondary btn-small" onclick="logout()">退出</button>
@@ -77,10 +74,13 @@
 
         <!-- 主内容区 -->
         <div class="main-container">
-            <!-- 左侧边栏：笔记本列表 -->
+            <!-- 左侧边栏：树形笔记本 -->
             <aside class="sidebar">
-                <h2 class="sidebar-title">📁 我的笔记本</h2>
-                <div id="notebookList" class="notebook-list">
+                <div class="sidebar-header">
+                    <span class="sidebar-title-text">笔记本</span>
+                    <button class="btn-icon" onclick="showCreateNotebookModal()" title="新建笔记本">+</button>
+                </div>
+                <div id="notebookTree" class="notebook-tree">
                     <div class="loading">加载中...</div>
                 </div>
                 <div class="sidebar-actions">
@@ -93,60 +93,105 @@
                 </div>
             </aside>
 
-            <!-- 右侧内容区：文档列表 -->
+            <!-- 中间内容区 -->
             <main class="content">
-                <div class="content-header">
-                    <h2 id="currentNotebookName" class="content-title">📄 文档列表</h2>
-                    <div class="content-actions" id="contentActions" style="display: none;">
-                        <button class="btn btn-primary" onclick="showCreateDocumentModal()">
-                            <span>+</span> 新建文档
-                        </button>
-                        <button class="btn btn-secondary" onclick="triggerFileUpload()">
-                            <span>📤</span> 上传文件
-                        </button>
-                        <input type="file" id="fileInput" accept=".txt,.md,.docx,.pdf" style="display: none;" onchange="handleFileUpload(event)">
-                    </div>
-                </div>
-                
-                <!-- Day 22: 笔记本级问答面板 -->
-                <div id="notebookQAPanel" class="notebook-qa-wrapper" style="display: none;">
-                    <div class="notebook-qa-card">
-                        <div class="notebook-qa-topbar" onclick="toggleNotebookQA()">
-                            <div class="notebook-qa-brand">
-                                <span class="notebook-qa-emoji">✨</span>
-                                <span class="notebook-qa-label">AI 笔记本问答</span>
-                                <span class="notebook-qa-count" id="notebookDocCountBadge">0 篇文档</span>
-                            </div>
-                            <span class="notebook-qa-chevron" id="notebookQAChevron">▼</span>
-                        </div>
-                        <div class="notebook-qa-content" id="notebookQAContent">
-                            <p class="notebook-qa-desc">基于当前笔记本内的所有文档内容，综合回答你的问题</p>
-                            <div class="notebook-qa-inputbox">
-                                <input type="text" id="notebookQAInput" 
-                                       placeholder="例如：这些文档的共同主题是什么？对比各篇的核心观点..." 
-                                       onkeypress="if(event.key==='Enter') askNotebook()">
-                                <button class="btn btn-primary notebook-qa-sendbtn" onclick="askNotebook()">
-                                    <span>🚀</span> 提问
-                                </button>
-                            </div>
-                            <div id="notebookQAAnswer" class="notebook-qa-answer" style="display: none;">
-                                <div class="notebook-qa-answerlabel">
-                                    🤖 AI 综合回答
-                                    <span id="notebookStreamIndicator" class="stream-indicator" style="display: none;">
-                                        <span class="stream-dot"></span> AI 正在输入...
-                                    </span>
-                                </div>
-                                <textarea id="notebookQAAnswerText" class="notebook-qa-answertext" readonly rows="8"></textarea>
-                                <div id="notebookCitations" class="citations-container" style="display: none;"></div>
-                                <div id="notebookTokenUsage" class="token-usage-container" style="display: none;"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                
-                <div id="documentList" class="document-list">
+                <!-- 空状态（未选择笔记本时显示） -->
+                <div id="emptyView" class="view-panel">
                     <div class="empty-state">
-                        <p>请先在左侧选择一个笔记本</p>
+                        <div class="empty-state-icon">📁</div>
+                        <p>在左侧选择或创建一个笔记本</p>
+                    </div>
+                </div>
+
+                <!-- 笔记本视图（选中笔记本时显示） -->
+                <div id="notebookView" class="view-panel" style="display: none;">
+                    <div class="view-header">
+                        <h2 id="notebookViewTitle" class="view-title"></h2>
+                        <div class="view-actions">
+                            <button class="btn btn-primary" onclick="showCreateDocumentModal()">
+                                <span>+</span> 新建文档
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 笔记本级 AI 问答面板 -->
+                    <div id="notebookQAPanel" class="notebook-qa-wrapper" style="display: none;">
+                        <div class="notebook-qa-card">
+                            <div class="notebook-qa-topbar" onclick="toggleNotebookQA()">
+                                <div class="notebook-qa-brand">
+                                    <span class="notebook-qa-emoji">✨</span>
+                                    <span class="notebook-qa-label">AI 笔记本问答</span>
+                                    <span class="notebook-qa-count" id="notebookDocCountBadge">0 篇文档</span>
+                                </div>
+                                <span class="notebook-qa-chevron" id="notebookQAChevron">▼</span>
+                            </div>
+                            <div class="notebook-qa-content" id="notebookQAContent">
+                                <div class="notebook-qa-toprow">
+                                    <p class="notebook-qa-desc">基于当前笔记本内的所有文档内容，综合回答你的问题</p>
+                                    <button id="notebookClearChatBtn" class="chat-clear-btn" onclick="clearNotebookChat()" style="display: none;">🗑️ 清空对话</button>
+                                </div>
+                                <!-- Day 30：对话历史列表 -->
+                                <div id="notebookChatHistory" class="chat-history"></div>
+                                <div class="notebook-qa-inputbox">
+                                    <input type="text" id="notebookQAInput" 
+                                           placeholder="例如：这些文档的共同主题是什么？对比各篇的核心观点..." 
+                                           onkeypress="if(event.key==='Enter') askNotebook()">
+                                    <button class="btn btn-primary notebook-qa-sendbtn" onclick="askNotebook()">
+                                        <span>🚀</span> 提问
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 文档卡片列表 -->
+                    <div id="documentCards" class="document-cards"></div>
+                </div>
+
+                <!-- 文档视图（点击具体文档时显示） -->
+                <div id="documentView" class="view-panel" style="display: none;">
+                    <div class="view-header">
+                        <button class="btn-back" onclick="backToNotebook()">← 返回</button>
+                        <h2 id="docViewTitle" class="view-title"></h2>
+                        <button class="btn btn-danger btn-small" onclick="deleteDocument()">删除</button>
+                    </div>
+                    <div class="document-view-body">
+                        <!-- AI 摘要区域 -->
+                        <div id="docSummaryBox" class="document-summary-box" style="display: none;">
+                            <div class="summary-box-header">
+                                <span>🤖 AI 摘要</span>
+                                <button id="docSummaryRegenBtn" class="btn btn-small btn-secondary">🔄 重新生成</button>
+                            </div>
+                            <div id="docSummaryText" class="summary-box-content"></div>
+                        </div>
+                        <!-- 文档原文（可折叠） -->
+                        <div class="doc-content-section">
+                            <div class="doc-content-header" onclick="toggleDocContent()">
+                                <span class="doc-content-toggle" id="docContentToggle">▶</span>
+                                <span>文档原文</span>
+                                <span class="doc-content-hint" id="docContentHint"></span>
+                            </div>
+                            <pre id="docContent" class="document-content" style="display: none;"></pre>
+                        </div>
+                        <!-- 智能问答 -->
+                        <div class="document-qa-section">
+                            <div class="qa-switch-area">
+                                <label class="switch">
+                                    <input type="checkbox" id="qaContextSwitch" checked>
+                                    <span class="slider round"></span>
+                                </label>
+                                <span class="switch-label">基于当前文档内容回答</span>
+                            </div>
+                            <div class="qa-header">
+                                <span>💬 智能问答</span>
+                                <button id="docClearChatBtn" class="chat-clear-btn" onclick="clearDocChat()" style="display: none;">🗑️ 清空对话</button>
+                            </div>
+                            <!-- Day 30：对话历史列表 -->
+                            <div id="docChatHistory" class="chat-history"></div>
+                            <div class="qa-input-area">
+                                <input type="text" id="qaInput" placeholder="输入你的问题，例如：这篇文档讲了什么？"
+                                    onkeypress="if(event.key==='Enter') askDocument()">
+                                <button class="btn btn-primary" onclick="askDocument()">提问</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </main>
@@ -234,68 +279,36 @@
                     <label for="documentTitle">标题 <span class="required">*</span></label>
                     <input type="text" id="documentTitle" placeholder="请输入文档标题">
                 </div>
-                <div class="form-group">
-                    <label for="documentContent">内容</label>
-                    <textarea id="documentContent" placeholder="请输入文档内容..." rows="10"></textarea>
+                <div class="doc-create-modes">
+                    <label class="doc-create-mode-check">
+                        <input type="checkbox" id="checkText" checked onchange="updateDocCreateModes()">
+                        <span>输入内容</span>
+                    </label>
+                    <label class="doc-create-mode-check">
+                        <input type="checkbox" id="checkFile" onchange="updateDocCreateModes()">
+                        <span>上传文件</span>
+                    </label>
+                </div>
+                <div id="docCreateTextSection" class="form-group">
+                    <textarea id="documentContent" placeholder="请输入文档内容..." rows="8"></textarea>
+                </div>
+                <div id="docCreateFileSection" style="display: none;">
+                    <div class="doc-create-upload" id="docCreateUploadArea" onclick="document.getElementById('modalFileInput').click()">
+                        <span class="doc-create-upload-icon">📄</span>
+                        <span class="doc-create-upload-text">点击选择文件</span>
+                        <span class="doc-create-upload-hint">支持 .txt, .md, .docx, .pdf</span>
+                    </div>
+                    <input type="file" id="modalFileInput" accept=".txt,.md,.docx,.pdf" style="display: none;" onchange="onModalFileSelected(event)">
+                    <div id="selectedFileInfo" class="selected-file-info" style="display: none;">
+                        <span class="selected-file-icon">📎</span>
+                        <span id="selectedFileName" class="selected-file-name"></span>
+                        <button class="btn btn-small btn-danger" onclick="clearSelectedFile()">移除</button>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="closeModal('createDocumentModal')">取消</button>
                 <button class="btn btn-primary" onclick="createDocument()">创建</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- 查看文档内容弹窗 -->
-    <div id="viewDocumentModal" class="modal">
-        <div class="modal-content modal-large">
-            <div class="modal-header">
-                <h3 id="viewDocumentTitle">文档内容</h3>
-                <button class="close-btn" onclick="closeModal('viewDocumentModal')">&times;</button>
-            </div>
-            <div class="modal-body">
-                <!-- AI 摘要区域 -->
-                <div id="viewDocumentSummary" class="document-summary-box" style="display:none;">
-                    <div class="summary-box-header">
-                        <span>🤖 AI 摘要</span>
-                        <button id="viewSummaryRegenBtn" class="btn btn-small btn-secondary">🔄 重新生成</button>
-                    </div>
-                    <div id="viewSummaryText" class="summary-box-content"></div>
-                </div>
-                <pre id="viewDocumentContent" class="document-content"></pre>
-                <div class="document-qa-section">
-                    <!-- 开关区域 -->
-                    <div class="qa-switch-area">
-                        <label class="switch">
-                            <input type="checkbox" id="qaContextSwitch" checked>
-                            <span class="slider round"></span>
-                        </label>
-                        <span class="switch-label">基于当前文档内容回答</span>
-                    </div>
-                    
-                    <div class="qa-header">
-                        <span>💬 智能问答</span>
-                    </div>
-                    <div class="qa-input-area">
-                        <input type="text" id="qaInput" placeholder="输入你的问题，例如：这篇文档讲了什么？" 
-                            onkeypress="if(event.key==='Enter') askDocument()">
-                        <button class="btn btn-primary" onclick="askDocument()">提问</button>
-                    </div>
-                    <div id="qaAnswer" class="qa-answer" style="display: none;">
-                        <div class="qa-answer-label">
-                            🤖 回答：
-                            <span id="qaStreamIndicator" class="stream-indicator" style="display: none;">
-                                <span class="stream-dot"></span> AI 正在输入...
-                            </span>
-                        </div>
-                        <textarea id="qaAnswerText" class="qa-answer-text" readonly rows="8"></textarea>
-                        <div id="qaCitations" class="citations-container" style="display: none;"></div>
-                        <div id="qaTokenUsage" class="token-usage-container" style="display: none;"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" onclick="closeModal('viewDocumentModal')">关闭</button>
             </div>
         </div>
     </div>

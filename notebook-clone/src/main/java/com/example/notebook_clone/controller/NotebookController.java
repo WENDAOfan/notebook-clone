@@ -17,9 +17,11 @@ import com.example.notebook_clone.entity.User;           // ← 新增
 import com.example.notebook_clone.repository.UserRepository; // ← 新增
 //day22
 import com.example.notebook_clone.dto.AskRequest;
+import com.example.notebook_clone.entity.ChatMessage;  // Day 30 新增
 import com.example.notebook_clone.entity.Document;
 import com.example.notebook_clone.repository.DocumentRepository;
 import com.example.notebook_clone.service.AiChatService;
+import com.example.notebook_clone.service.ChatHistoryService;  // Day 30 新增
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 
@@ -32,11 +34,13 @@ public class NotebookController {
     private final UserRepository userRepository;  // ← 新增
     private final DocumentRepository documentRepository;
     private final AiChatService aiChatService;
-    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository,DocumentRepository documentRepository,AiChatService aiChatService) {
+    private final ChatHistoryService chatHistoryService;  // Day 30 新增
+    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository,DocumentRepository documentRepository,AiChatService aiChatService,ChatHistoryService chatHistoryService) {
         this.notebookRepository = notebookRepository;
         this.userRepository = userRepository;
         this.documentRepository = documentRepository; 
         this.aiChatService = aiChatService;
+        this.chatHistoryService = chatHistoryService;  // Day 30 新增
     }
 
     // 接口 1：查看所有笔记本 (GET 请求)
@@ -110,6 +114,8 @@ public class NotebookController {
         throw new RuntimeException("笔记本不存在或无权删除");
             }
         // 3. 校验通过，删除
+        // Day 30：清空该笔记本的对话历史
+        chatHistoryService.clearNotebookHistory(id, currentUser.getId());
         notebookRepository.deleteById(id);
         return Result.success(null);
         
@@ -136,10 +142,12 @@ public class NotebookController {
                 .map(doc -> new String[]{doc.getTitle(), doc.getContent()})//对流中的每个 Document 对象进行转换
                 .toList();//将流收集为不可变的 List<String[]>。
         //doc 是 lambda 表达式中的参数,代表流中的每一个 Document 实体对象。.map(doc -> ...): 对流的每个元素执行转换操作
-        // 6. 调用 AI 基于多篇文档回答
+        // 6. 调用 AI 基于多篇文档回答（Day 30：传入 notebookId 和 userId 用于对话历史）
         String answer = aiChatService.askBasedOnDocuments(
                 docList,
-                request.getQuestion()
+                request.getQuestion(),
+                id,
+                currentUser.getId()
         );
         return Result.success(answer);
     }
@@ -170,10 +178,56 @@ public class NotebookController {
         List<String[]> docList = documents.stream()//将 documents 列表(类型是 List<Document>)转换为流,可以逐个处理每个元素。
                 .map(doc -> new String[]{doc.getTitle(), doc.getContent()})//对流中的每个 Document 对象进行转换
                 .toList();//将流收集为不可变的 List<String[]>。
-        // 5. 调用 aiChatService.askBasedOnDocumentsStream(docList, question)
+        // 5. 调用 aiChatService.askBasedOnDocumentsStream(docList, question)（Day 30：传入 notebookId 和 userId 用于对话历史）
         return aiChatService.askBasedOnDocumentsStream(
                 docList,
-                question
+                question,
+                id,
+                currentUser.getId()
         );
+    }
+
+    // ===== Day 30 新增：对话历史查询/清空接口 =====
+
+    /**
+     * 查询某个笔记本的对话历史
+     */
+    @GetMapping("/{id}/chat/history")
+    public Result<List<ChatMessage>> getChatHistory(@PathVariable Long id) {
+        // 1. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+        // 2. 校验笔记本归属
+        notebookRepository.findByIdAndUserId(id, currentUser.getId())
+                .orElseThrow(() -> new RuntimeException("笔记本不存在或无权访问"));
+
+        // 3. 返回对话历史
+        String sessionId = chatHistoryService.buildNotebookSessionId(id, currentUser.getId());
+        return Result.success(chatHistoryService.getHistory(sessionId));
+    }
+
+    /**
+     * 清空某个笔记本的对话历史
+     */
+    @DeleteMapping("/{id}/chat/history")
+    public Result<Void> clearChatHistory(@PathVariable Long id) {
+        // 1. 获取当前用户
+        String username = SecurityContextHolder.getContext()
+                .getAuthentication().getName();
+        User currentUser = userRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
+
+        // 2. 校验笔记本归属
+        Boolean exists = notebookRepository.existsByIdAndUserId(id, currentUser.getId());
+        if (!exists) {
+            throw new RuntimeException("笔记本不存在或无权操作");
+        }
+
+        // 3. 清空历史
+        chatHistoryService.clearNotebookHistory(id, currentUser.getId());
+        return Result.success(null);
     }
 }

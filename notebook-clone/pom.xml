@@ -118,6 +118,23 @@
 			<artifactId>spring-ai-starter-model-openai</artifactId>
 		</dependency>
 		<!-- ======================================= -->
+		<!-- ===== Day 28 新增：文本分块工具 ===== -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-tika-document-reader</artifactId>
+		</dependency>
+		<!-- ================================== -->
+		<!-- ===== Day 28 新增：向量存储 ===== -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-vector-store</artifactId>
+		</dependency>
+		<!-- ===== Day 28 新增：智谱 AI Embedding ===== -->
+		<dependency>
+			<groupId>org.springframework.ai</groupId>
+			<artifactId>spring-ai-zhipuai</artifactId>
+		</dependency>
+		<!-- ==================================== -->
 		<!-- ===== Day 26 新增：Spring Retry 重试机制 ===== -->
 		<dependency>
 			<groupId>org.springframework.retry</groupId>

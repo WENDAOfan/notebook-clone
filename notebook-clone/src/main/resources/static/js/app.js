@@ -4,7 +4,11 @@ let currentNotebookId = null;
 let currentDocuments = [];
 let currentUser = null;
 let authToken = null;
-window.sessionTokenTotal = 0; // Day 26: 当前会话 Token 累计
+let currentDocumentId = null;
+let expandedNotebooks = new Set();
+let notebookDocuments = {};
+let selectedFile = null;
+window.sessionTokenTotal = 0;
 
 // ==================== 初始化 ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -13,7 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ==================== 登录状态管理 ====================
 function checkLoginStatus() {
-    // 从 localStorage 读取登录信息
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('currentUser');
     
@@ -41,7 +44,6 @@ function showMainApp() {
 function showRegister() {
     document.getElementById('loginForm').style.display = 'none';
     document.getElementById('registerForm').style.display = 'block';
-    // 清空表单
     document.getElementById('registerUsername').value = '';
     document.getElementById('registerPassword').value = '';
     document.getElementById('registerConfirmPassword').value = '';
@@ -50,7 +52,6 @@ function showRegister() {
 function showLogin() {
     document.getElementById('registerForm').style.display = 'none';
     document.getElementById('loginForm').style.display = 'block';
-    // 清空表单
     document.getElementById('loginUsername').value = '';
     document.getElementById('loginPassword').value = '';
 }
@@ -64,7 +65,6 @@ async function fetchAPI(url, options = {}) {
             'Content-Type': 'application/json',
         };
         
-        // Day 16 JWT：添加 Token 到请求头
         if (authToken) {
             headers['Authorization'] = 'Bearer ' + authToken;
         }
@@ -75,7 +75,6 @@ async function fetchAPI(url, options = {}) {
         });
         
         if (!response.ok) {
-            // 如果返回 401，说明 Token 失效，需要重新登录
             if (response.status === 401) {
                 showToast('登录已过期，请重新登录', 'error');
                 logout();
@@ -125,7 +124,6 @@ async function login() {
     try {
         const response = await loginAPI(username, password);
         
-        // Day 16 JWT：保存 Token 和用户信息
         authToken = response.token;
         currentUser = {
             id: response.id,
@@ -133,7 +131,6 @@ async function login() {
             email: response.email
         };
         
-        // 保存到 localStorage
         localStorage.setItem('authToken', authToken);
         localStorage.setItem('currentUser', JSON.stringify(currentUser));
         
@@ -174,15 +171,15 @@ async function register() {
 }
 
 function logout() {
-    // 清除登录状态
     authToken = null;
     currentUser = null;
     currentNotebookId = null;
     currentDocuments = [];
     notebooks = [];
-    // Day 22: 隐藏笔记本问答面板
-    const panel = document.getElementById('notebookQAPanel');
-    if (panel) panel.style.display = 'none';
+    currentDocumentId = null;
+    expandedNotebooks = new Set();
+    notebookDocuments = {};
+    selectedFile = null;
     
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
@@ -255,12 +252,14 @@ async function deleteDocumentAPI(id) {
     });
 }
 
-async function uploadDocumentFileAPI(file, notebookId) {
+async function uploadDocumentFileAPI(file, notebookId, additionalContent) {
     const formData = new FormData();
     formData.append('file', file);
+    if (additionalContent) {
+        formData.append('additionalContent', additionalContent);
+    }
     
     const headers = {};
-    // Day 16 JWT：添加 Token 到请求头
     if (authToken) {
         headers['Authorization'] = 'Bearer ' + authToken;
     }
@@ -288,6 +287,7 @@ async function uploadDocumentFileAPI(file, notebookId) {
     
     return result.data;
 }
+
 async function askDocumentAPI(documentId, question, useDocumentContext) {
     return fetchAPI(`/api/documents/${documentId}/ask`, {
         method: 'POST',
@@ -295,7 +295,6 @@ async function askDocumentAPI(documentId, question, useDocumentContext) {
     });
 }
 
-// Day 22: 笔记本级问答 API
 async function askNotebookAPI(notebookId, question) {
     return fetchAPI(`/api/notebooks/${notebookId}/ask`, {
         method: 'POST',
@@ -303,8 +302,7 @@ async function askNotebookAPI(notebookId, question) {
     });
 }
 
-// Day 23-5: SSE 流式请求封装（使用 fetch + ReadableStream，支持自定义 Header）
-// Day 26 增强：支持 event: token-usage 自定义事件
+// ==================== SSE 流式请求封装 ====================
 async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
     const queryString = new URLSearchParams(params).toString();
     const fullUrl = `${API_BASE}${url}${queryString ? '?' + queryString : ''}`;
@@ -331,7 +329,7 @@ async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
 
     function processBuffer() {
         const blocks = buffer.split('\n\n');
-        buffer = blocks.pop(); // 最后一个块可能不完整，保留到下次
+        buffer = blocks.pop();
 
         for (const block of blocks) {
             const lines = block.split('\n');
@@ -367,7 +365,6 @@ async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
             try {
                 ({ done, value } = await reader.read());
             } catch (readError) {
-                // 如果已经收到过数据，连接关闭视为流正常结束
                 if (receivedData) break;
                 throw readError;
             }
@@ -381,7 +378,6 @@ async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
         reader.releaseLock();
     }
 
-    // 刷新 decoder 内部缓冲区中残留的数据
     buffer += decoder.decode();
     if (buffer.trim()) {
         processBuffer();
@@ -406,62 +402,98 @@ function askNotebookStreamAPI(notebookId, question, onChunk, onTokenUsage) {
     );
 }
 
-// ==================== UI 渲染 ====================
-function renderNotebookList() {
-    const container = document.getElementById('notebookList');
+// ==================== 视图切换 ====================
+function showEmptyView() {
+    document.getElementById('emptyView').style.display = 'flex';
+    document.getElementById('notebookView').style.display = 'none';
+    document.getElementById('documentView').style.display = 'none';
+}
+
+function showNotebookView() {
+    document.getElementById('emptyView').style.display = 'none';
+    document.getElementById('notebookView').style.display = 'flex';
+    document.getElementById('documentView').style.display = 'none';
+    
+    const notebook = notebooks.find(n => n.id === currentNotebookId);
+    if (notebook) {
+        document.getElementById('notebookViewTitle').textContent = escapeHtml(notebook.name);
+    }
+    
+    const badge = document.getElementById('notebookDocCountBadge');
+    if (badge) {
+        badge.textContent = (currentDocuments?.length || 0) + ' 篇文档';
+    }
+    
+    const panel = document.getElementById('notebookQAPanel');
+    if (panel && currentNotebookId) {
+        panel.style.display = 'block';
+    }
+    
+    renderDocumentCards();
+    renderNotebookTree();
+}
+
+function showDocumentView() {
+    document.getElementById('emptyView').style.display = 'none';
+    document.getElementById('notebookView').style.display = 'none';
+    document.getElementById('documentView').style.display = 'flex';
+    renderNotebookTree();
+}
+
+// ==================== 树形侧栏渲染 ====================
+function renderNotebookTree() {
+    const container = document.getElementById('notebookTree');
     
     if (notebooks.length === 0) {
         container.innerHTML = `
             <div class="empty-state" style="padding: 40px 20px;">
                 <div class="empty-state-icon">📭</div>
                 <p>还没有笔记本</p>
-                <p style="font-size: 12px; margin-top: 8px;">点击右上角按钮创建</p>
+                <p style="font-size: 12px; margin-top: 8px;">点击 + 按钮创建</p>
             </div>
         `;
         return;
     }
     
-    container.innerHTML = notebooks.map(notebook => `
-        <div class="notebook-item ${notebook.id === currentNotebookId ? 'active' : ''}" 
-             onclick="selectNotebook(${notebook.id})" 
-             title="${notebook.description || ''}">
-            <span class="icon">📁</span>
-            <span class="name">${escapeHtml(notebook.name)}</span>
-        </div>
-    `).join('');
+    let html = '';
+    for (const notebook of notebooks) {
+        const isExpanded = expandedNotebooks.has(notebook.id);
+        const isActive = notebook.id === currentNotebookId;
+        const docs = notebookDocuments[notebook.id] || [];
+        
+        html += `<div class="tree-notebook-item ${isActive ? 'active' : ''}" 
+                       onclick="selectNotebook(${notebook.id})" 
+                       title="${escapeHtml(notebook.description || '')}">
+            <span class="tree-toggle" onclick="toggleNotebook(${notebook.id}, event)">${isExpanded ? '▼' : '▶'}</span>
+            <span class="tree-notebook-icon">📁</span>
+            <span class="tree-notebook-name">${escapeHtml(notebook.name)}</span>
+        </div>`;
+        
+        if (isExpanded && docs.length > 0) {
+            html += '<div class="tree-documents">';
+            for (const doc of docs) {
+                const isDocActive = doc.id === currentDocumentId;
+                html += `<div class="tree-document-item ${isDocActive ? 'active' : ''}" 
+                               onclick="selectDocument(${doc.id}, event)" 
+                               title="${escapeHtml(doc.title)}">
+                    <span class="tree-doc-icon">📄</span>
+                    <span class="tree-doc-name">${escapeHtml(doc.title)}</span>
+                </div>`;
+            }
+            html += '</div>';
+        }
+    }
+    
+    container.innerHTML = html;
 }
 
-function renderDocumentList() {
-    const container = document.getElementById('documentList');
-    const currentNotebook = notebooks.find(n => n.id === currentNotebookId);
-    
-    document.getElementById('currentNotebookName').textContent = 
-        currentNotebook ? `📄 ${escapeHtml(currentNotebook.name)} - 文档列表` : '📄 文档列表';
-    
-    document.getElementById('contentActions').style.display = currentNotebookId ? 'flex' : 'none';
-    
-    document.getElementById('btnRename').disabled = !currentNotebookId;
-    document.getElementById('btnDeleteNotebook').disabled = !currentNotebookId;
-    
-    // Day 22: 更新笔记本问答面板的文档数量
-    const badge = document.getElementById('notebookDocCountBadge');
-    if (badge) {
-        badge.textContent = (currentDocuments?.length || 0) + ' 篇文档';
-    }
-    
-    if (!currentNotebookId) {
-        container.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">📁</div>
-                <p>请先在左侧选择一个笔记本</p>
-            </div>
-        `;
-        return;
-    }
+// ==================== 文档卡片渲染（笔记本视图） ====================
+function renderDocumentCards() {
+    const container = document.getElementById('documentCards');
     
     if (currentDocuments.length === 0) {
         container.innerHTML = `
-            <div class="empty-state">
+            <div class="empty-state" style="padding: 60px 20px;">
                 <div class="empty-state-icon">📝</div>
                 <p>这个笔记本还没有文档</p>
                 <p style="font-size: 12px; margin-top: 8px;">点击上方按钮创建或上传</p>
@@ -499,19 +531,18 @@ function renderDocumentList() {
         }
         
         return `
-        <div class="document-item">
+        <div class="document-card" onclick="selectDocument(${doc.id})">
             <span class="document-icon">📄</span>
             <div class="document-info">
                 <div class="document-title">${escapeHtml(doc.title)}</div>
                 <div class="document-meta">
                     创建于 ${formatDate(doc.createTime)}
-                    ${doc.content ? `· ${formatFileSize(doc.content.length)}` : ''}
+                    ${doc.content ? ` · ${formatFileSize(doc.content.length)}` : ''}
                 </div>
                 ${summaryHtml}
             </div>
             <div class="document-actions">
-                <button class="btn btn-secondary btn-small" onclick="viewDocument(${doc.id})">查看</button>
-                <button class="btn btn-danger btn-small" onclick="deleteDocument(${doc.id})">删除</button>
+                <button class="btn btn-danger btn-small" onclick="deleteDocument(${doc.id}, event)">删除</button>
             </div>
         </div>
         `;
@@ -522,7 +553,7 @@ function renderDocumentList() {
 async function loadNotebooks() {
     try {
         notebooks = await getAllNotebooks();
-        renderNotebookList();
+        renderNotebookTree();
     } catch (error) {
         showToast('加载笔记本失败: ' + error.message, 'error');
     }
@@ -530,24 +561,111 @@ async function loadNotebooks() {
 
 async function selectNotebook(id) {
     currentNotebookId = id;
-    renderNotebookList();
+    currentDocumentId = null;
+    expandedNotebooks.add(id);
     
     try {
         currentDocuments = await getDocumentsByNotebook(id);
-        renderDocumentList();
+        notebookDocuments[id] = currentDocuments;
         
-        // Day 22: 显示笔记本问答面板，默认收起
-        const panel = document.getElementById('notebookQAPanel');
-        const content = document.getElementById('notebookQAContent');
-        const chevron = document.getElementById('notebookQAChevron');
-        if (panel) {
-            panel.style.display = 'block';
-            if (content) content.style.display = 'none';
-            if (chevron) chevron.textContent = '▼';
-        }
+        showNotebookView();
         resetNotebookQA();
+        
+        document.getElementById('btnRename').disabled = false;
+        document.getElementById('btnDeleteNotebook').disabled = false;
     } catch (error) {
         showToast('加载文档失败: ' + error.message, 'error');
+    }
+}
+
+function toggleNotebook(id, event) {
+    event.stopPropagation();
+    if (expandedNotebooks.has(id)) {
+        expandedNotebooks.delete(id);
+    } else {
+        expandedNotebooks.add(id);
+    }
+    renderNotebookTree();
+}
+
+async function selectDocument(id, event) {
+    if (event) event.stopPropagation();
+    currentDocumentId = id;
+    
+    const doc = currentDocuments.find(d => d.id === id);
+    if (!doc) return;
+    
+    document.getElementById('docViewTitle').textContent = doc.title;
+    document.getElementById('docViewTitle').dataset.documentId = id;
+    
+    // 摘要区域
+    const summaryBox = document.getElementById('docSummaryBox');
+    const summaryText = document.getElementById('docSummaryText');
+    const regenBtn = document.getElementById('docSummaryRegenBtn');
+    
+    if (doc.summary === '摘要生成中...') {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '🤖 AI 摘要正在生成中，请稍后刷新...';
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'none';
+    } else if (doc.summary && doc.summary !== '内容过短，无需摘要') {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = doc.summary;
+        summaryText.classList.remove('summary-hint');
+        regenBtn.style.display = 'inline-flex';
+        regenBtn.textContent = '🔄 重新生成';
+        regenBtn.onclick = () => regenerateSummary(id);
+    } else if (doc.summary === '内容过短，无需摘要') {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '📝 内容过短，无需摘要';
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'none';
+    } else {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '暂无摘要，点击下方按钮生成';
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'inline-flex';
+        regenBtn.textContent = '🤖 生成摘要';
+        regenBtn.onclick = () => generateSummary(id);
+    }
+    
+    document.getElementById('docContent').textContent = doc.content || '（无内容）';
+    
+    // 默认折叠文档原文，显示预览提示
+    document.getElementById('docContent').style.display = 'none';
+    document.getElementById('docContentToggle').textContent = '▶';
+    const hint = document.getElementById('docContentHint');
+    if (doc.content && doc.content.length > 0) {
+        const preview = doc.content.substring(0, 50).replace(/\n/g, ' ');
+        hint.textContent = preview + (doc.content.length > 50 ? '...' : '') + ` (${formatFileSize(doc.content.length)})`;
+    } else {
+        hint.textContent = '（无内容）';
+    }
+    
+    // 重置问答区域
+    document.getElementById('qaContextSwitch').checked = true;
+    document.getElementById('qaInput').value = '';
+    
+    showDocumentView();
+
+    // Day 30：加载该文档的对话历史
+    loadDocChatHistory(id);
+}
+
+function backToNotebook() {
+    currentDocumentId = null;
+    showNotebookView();
+}
+
+function toggleDocContent() {
+    const content = document.getElementById('docContent');
+    const toggle = document.getElementById('docContentToggle');
+    if (content.style.display === 'none') {
+        content.style.display = 'block';
+        toggle.textContent = '▼';
+    } else {
+        content.style.display = 'none';
+        toggle.textContent = '▶';
     }
 }
 
@@ -588,9 +706,8 @@ async function renameNotebook() {
         closeModal('renameNotebookModal');
         showToast('笔记本修改成功', 'success');
         await loadNotebooks();
-        const currentNotebook = notebooks.find(n => n.id === currentNotebookId);
-        if (currentNotebook) {
-            document.getElementById('currentNotebookName').textContent = `📄 ${escapeHtml(name)} - 文档列表`;
+        if (currentNotebookId) {
+            showNotebookView();
         }
     } catch (error) {
         showToast('修改失败: ' + error.message, 'error');
@@ -607,14 +724,15 @@ async function deleteCurrentNotebook() {
     
     try {
         await deleteNotebookAPI(currentNotebookId);
+        delete notebookDocuments[currentNotebookId];
         currentNotebookId = null;
+        currentDocumentId = null;
         currentDocuments = [];
-        // Day 22: 隐藏笔记本问答面板
-        const panel = document.getElementById('notebookQAPanel');
-        if (panel) panel.style.display = 'none';
         showToast('笔记本删除成功', 'success');
         await loadNotebooks();
-        renderDocumentList();
+        showEmptyView();
+        document.getElementById('btnRename').disabled = true;
+        document.getElementById('btnDeleteNotebook').disabled = true;
     } catch (error) {
         showToast('删除失败: ' + error.message, 'error');
     }
@@ -624,93 +742,247 @@ async function createDocument() {
     if (!currentNotebookId) return;
     
     const title = document.getElementById('documentTitle').value.trim();
-    const content = document.getElementById('documentContent').value;
+    const hasText = document.getElementById('checkText').checked;
+    const fileChecked = document.getElementById('checkFile').checked;
+    const hasFile = fileChecked && selectedFile;
     
     if (!title) {
         showToast('请输入文档标题', 'error');
         return;
     }
     
+    if (fileChecked && !selectedFile) {
+        showToast('请先选择一个文件', 'error');
+        return;
+    }
+    
+    if (!hasText && !hasFile) {
+        showToast('请至少输入内容或上传文件', 'error');
+        return;
+    }
+    
     try {
-        await createDocumentAPI({ title, content }, currentNotebookId);
-        closeModal('createDocumentModal');
-        document.getElementById('documentTitle').value = '';
-        document.getElementById('documentContent').value = '';
-        showToast('文档创建成功', 'success');
-        currentDocuments = await getDocumentsByNotebook(currentNotebookId);
-        renderDocumentList();
+        if (hasFile) {
+            // 有文件：走 upload 接口（可能同时有手动输入内容）
+            const additionalContent = hasText ? document.getElementById('documentContent').value : null;
+            showUploadOverlay();
+            const uploadedDoc = await uploadDocumentFileAPI(selectedFile, currentNotebookId, additionalContent);
+            hideUploadOverlay();
+            showToast('文档创建成功，摘要生成中...', 'success');
+            closeModal('createDocumentModal');
+            resetDocCreateModal();
+            currentDocuments.push(uploadedDoc);
+            notebookDocuments[currentNotebookId] = currentDocuments;
+            showNotebookView();
+            pollSummaryReady(uploadedDoc.id, 1, 12);
+        } else {
+            // 纯文本：走 JSON 创建接口
+            const content = document.getElementById('documentContent').value;
+            const newDoc = await createDocumentAPI({ title, content }, currentNotebookId);
+            closeModal('createDocumentModal');
+            resetDocCreateModal();
+            showToast('文档创建成功', 'success');
+            currentDocuments = await getDocumentsByNotebook(currentNotebookId);
+            notebookDocuments[currentNotebookId] = currentDocuments;
+            
+            if (newDoc && newDoc.id) {
+                await selectDocument(newDoc.id);
+            } else {
+                showNotebookView();
+            }
+        }
     } catch (error) {
+        hideUploadOverlay();
         showToast('创建失败: ' + error.message, 'error');
     }
 }
 
-async function deleteDocument(id) {
+async function deleteDocument(idOrEvent, event) {
+    let id = idOrEvent;
+    let evt = event;
+    
+    // 支持两种调用方式：deleteDocument() 和 deleteDocument(id, event)
+    if (typeof idOrEvent === 'object') {
+        id = currentDocumentId;
+        evt = idOrEvent;
+    }
+    
+    if (evt) evt.stopPropagation();
+    if (!id) return;
     if (!confirm('确定要删除这个文档吗？')) return;
     
     try {
         await deleteDocumentAPI(id);
         showToast('文档删除成功', 'success');
         currentDocuments = await getDocumentsByNotebook(currentNotebookId);
-        renderDocumentList();
+        notebookDocuments[currentNotebookId] = currentDocuments;
+        
+        if (currentDocumentId === id) {
+            currentDocumentId = null;
+            showNotebookView();
+        } else {
+            showNotebookView();
+        }
     } catch (error) {
         showToast('删除失败: ' + error.message, 'error');
     }
 }
 
-function viewDocument(id) {
-    const doc = currentDocuments.find(d => d.id === id);
-    if (!doc) return;
-    
-    document.getElementById('viewDocumentTitle').textContent = doc.title;
-    
-    // 摘要区域
-    const summaryBox = document.getElementById('viewDocumentSummary');
-    const summaryText = document.getElementById('viewSummaryText');
-    const regenBtn = document.getElementById('viewSummaryRegenBtn');
-    
-    if (doc.summary === '摘要生成中...') {
-        summaryBox.style.display = 'block';
-        summaryText.textContent = '🤖 AI 摘要正在生成中，请稍后刷新...';
-        summaryText.classList.add('summary-hint');
-        regenBtn.style.display = 'none';
-    } else if (doc.summary && doc.summary !== '内容过短，无需摘要') {
-        summaryBox.style.display = 'block';
-        summaryText.textContent = doc.summary;
-        summaryText.classList.remove('summary-hint');
-        regenBtn.style.display = 'inline-flex';
-        regenBtn.textContent = '🔄 重新生成';
-        regenBtn.onclick = () => regenerateSummary(id);
-    } else if (doc.summary === '内容过短，无需摘要') {
-        summaryBox.style.display = 'block';
-        summaryText.textContent = '📝 内容过短，无需摘要';
-        summaryText.classList.add('summary-hint');
-        regenBtn.style.display = 'none';
-    } else {
-        summaryBox.style.display = 'block';
-        summaryText.textContent = '暂无摘要，点击下方按钮生成';
-        summaryText.classList.add('summary-hint');
-        regenBtn.style.display = 'inline-flex';
-        regenBtn.textContent = '🤖 生成摘要';
-        regenBtn.onclick = () => generateSummary(id);
-    }
-    
-    document.getElementById('viewDocumentContent').textContent = doc.content || '（无内容）';
-    // 记录当前文档 ID（用于问答）
-    document.getElementById('viewDocumentTitle').dataset.documentId = id;
+// ==================== Day 30：对话历史相关 ====================
 
-    // 重置问答开关为默认开启
-    document.getElementById('qaContextSwitch').checked = true;
-
-    // 清空上一次的问答结果
-    document.getElementById('qaInput').value = '';
-    document.getElementById('qaAnswer').style.display = 'none';
-    document.getElementById('qaAnswerText').value = '';
-    showModal('viewDocumentModal');
+/** 追加用户气泡 */
+function appendUserBubble(container, text) {
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble user';
+    bubble.innerHTML = `
+        <div class="chat-avatar">🧑</div>
+        <div class="chat-body">
+            <div class="chat-text">${escapeHtml(text)}</div>
+        </div>
+    `;
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
 }
+
+/** 追加 AI 气泡，返回可操作的元素引用 */
+function appendAiBubble(container) {
+    const bubble = document.createElement('div');
+    bubble.className = 'chat-bubble assistant';
+
+    const avatar = document.createElement('div');
+    avatar.className = 'chat-avatar';
+    avatar.textContent = '🤖';
+
+    const body = document.createElement('div');
+    body.className = 'chat-body';
+
+    const textEl = document.createElement('div');
+    textEl.className = 'chat-text';
+
+    const citationEl = document.createElement('div');
+    citationEl.className = 'citations-container';
+    citationEl.style.display = 'none';
+
+    const tokenEl = document.createElement('div');
+    tokenEl.className = 'token-usage-container';
+    tokenEl.style.display = 'none';
+
+    body.appendChild(textEl);
+    body.appendChild(citationEl);
+    body.appendChild(tokenEl);
+    bubble.appendChild(avatar);
+    bubble.appendChild(body);
+    container.appendChild(bubble);
+    container.scrollTop = container.scrollHeight;
+
+    return { bubble, textEl, citationEl, tokenEl, rawText: '' };
+}
+
+/** 渲染历史消息列表 */
+function renderChatHistory(history, container, defaultTitle) {
+    container.innerHTML = '';
+    for (const msg of history) {
+        if (msg.role === 'user') {
+            appendUserBubble(container, msg.content);
+        } else {
+            const ai = appendAiBubble(container);
+            const { answer, citations } = parseCitations(msg.content, defaultTitle);
+            ai.textEl.textContent = answer;
+            if (citations.length > 0) {
+                renderCitationCards(citations, ai.citationEl);
+            }
+        }
+    }
+    container.scrollTop = container.scrollHeight;
+}
+
+/** 加载文档对话历史 */
+async function loadDocChatHistory(docId) {
+    const container = document.getElementById('docChatHistory');
+    const clearBtn = document.getElementById('docClearChatBtn');
+    if (container) container.innerHTML = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (!docId) return;
+    try {
+        const history = await fetchAPI(`/api/documents/${docId}/chat/history`);
+        if (history && history.length > 0 && container) {
+            const docTitle = document.getElementById('docViewTitle').textContent;
+            renderChatHistory(history, container, docTitle);
+            if (clearBtn) clearBtn.style.display = 'inline-flex';
+        }
+    } catch (e) {
+        console.warn('加载文档对话历史失败:', e);
+    }
+}
+
+/** 加载笔记本对话历史 */
+async function loadNotebookChatHistory(notebookId) {
+    const container = document.getElementById('notebookChatHistory');
+    const clearBtn = document.getElementById('notebookClearChatBtn');
+    if (container) container.innerHTML = '';
+    if (clearBtn) clearBtn.style.display = 'none';
+    if (!notebookId) return;
+    try {
+        const history = await fetchAPI(`/api/notebooks/${notebookId}/chat/history`);
+        if (history && history.length > 0 && container) {
+            const notebook = notebooks.find(n => n.id === notebookId);
+            renderChatHistory(history, container, notebook ? notebook.name : '笔记本问答');
+            if (clearBtn) clearBtn.style.display = 'inline-flex';
+        }
+    } catch (e) {
+        console.warn('加载笔记本对话历史失败:', e);
+    }
+}
+
+/** 清空文档对话历史 */
+async function clearDocChat() {
+    const currentDocId = document.getElementById('docViewTitle').dataset.documentId;
+    if (!currentDocId) return;
+    if (!confirm('确定要清空当前文档的对话历史吗？')) return;
+    try {
+        await fetchAPI(`/api/documents/${currentDocId}/chat/history`, { method: 'DELETE' });
+        const container = document.getElementById('docChatHistory');
+        if (container) container.innerHTML = '';
+        document.getElementById('docClearChatBtn').style.display = 'none';
+        showToast('对话已清空', 'success');
+    } catch (e) {
+        showToast('清空失败: ' + e.message, 'error');
+    }
+}
+
+/** 清空笔记本对话历史 */
+async function clearNotebookChat() {
+    if (!currentNotebookId) return;
+    if (!confirm('确定要清空当前笔记本的对话历史吗？')) return;
+    try {
+        await fetchAPI(`/api/notebooks/${currentNotebookId}/chat/history`, { method: 'DELETE' });
+        const container = document.getElementById('notebookChatHistory');
+        if (container) container.innerHTML = '';
+        document.getElementById('notebookClearChatBtn').style.display = 'none';
+        showToast('对话已清空', 'success');
+    } catch (e) {
+        showToast('清空失败: ' + e.message, 'error');
+    }
+}
+
+/** Token 用量 HTML（用于插入 AI 气泡内部） */
+function renderTokenUsageHtml(usage) {
+    if (!usage) return '';
+    const cost = (usage.total * 0.0015 / 1000).toFixed(4);
+    return `
+        <div class="token-usage-card">
+            <span class="token-usage-icon">📊</span>
+            <span class="token-usage-text">Token | 输入：${usage.prompt} | 输出：${usage.completion} | 总计：${usage.total}</span>
+            <span class="token-usage-cost">💰 约 ¥${cost}</span>
+        </div>
+    `;
+}
+
+// ==================== 文档问答 ====================
 async function askDocument() {
     const input = document.getElementById('qaInput');
     const question = input.value.trim();
-    const currentDocId = document.getElementById('viewDocumentTitle').dataset.documentId;
+    const currentDocId = document.getElementById('docViewTitle').dataset.documentId;
     const useDocumentContext = document.getElementById('qaContextSwitch').checked;
 
     if (!question) {
@@ -718,18 +990,15 @@ async function askDocument() {
         return;
     }
 
-    const answerWrapper = document.getElementById('qaAnswer');
-    const answerEl = document.getElementById('qaAnswerText');
-    const indicator = document.getElementById('qaStreamIndicator');
-    const tokenUsageEl = document.getElementById('qaTokenUsage');
+    const chatHistory = document.getElementById('docChatHistory');
 
-    answerWrapper.style.display = 'block';
-    answerEl.value = '';
-    tokenUsageEl.style.display = 'none';
-    tokenUsageEl.innerHTML = '';
-    indicator.style.display = 'inline';
-    answerEl.classList.add('streaming');
+    // 1. 追加用户气泡
+    appendUserBubble(chatHistory, question);
+    input.value = '';
 
+    // 2. 创建 AI 气泡（流式输出）
+    const ai = appendAiBubble(chatHistory);
+    ai.textEl.classList.add('streaming');
     showToast('AI 正在思考...', 'info');
 
     let currentUsage = null;
@@ -740,8 +1009,9 @@ async function askDocument() {
             question,
             useDocumentContext,
             (chunk) => {
-                answerEl.value += chunk;
-                answerEl.scrollTop = answerEl.scrollHeight;
+                ai.rawText += chunk;
+                ai.textEl.textContent = ai.rawText;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
             },
             (usage) => {
                 currentUsage = usage;
@@ -751,29 +1021,33 @@ async function askDocument() {
         showToast('回答完成', 'success');
     } catch (error) {
         showToast('回答失败：' + error.message, 'error');
-        answerEl.value = '获取回答失败，请稍后重试。';
+        ai.rawText = '获取回答失败，请稍后重试。';
+        ai.textEl.textContent = ai.rawText;
     } finally {
-        indicator.style.display = 'none';
-        answerEl.classList.remove('streaming');
+        ai.textEl.classList.remove('streaming');
 
-        const rawAnswer = answerEl.value;
-        const currentDocTitle = document.getElementById('viewDocumentTitle').textContent;
-        const { answer, citations } = parseCitations(rawAnswer, currentDocTitle);
+        // 解析引用并替换文本
+        const currentDocTitle = document.getElementById('docViewTitle').textContent;
+        const { answer, citations } = parseCitations(ai.rawText, currentDocTitle);
+        ai.textEl.textContent = answer;
 
         if (citations.length > 0) {
-            answerEl.value = answer;
-            const citationContainer = document.getElementById('qaCitations');
-            renderCitationCards(citations, citationContainer);
+            renderCitationCards(citations, ai.citationEl);
         }
 
         if (currentUsage) {
-            renderTokenUsageCard('qaTokenUsage', currentUsage);
+            ai.tokenEl.innerHTML = renderTokenUsageHtml(currentUsage);
+            ai.tokenEl.style.display = 'block';
             accumulateSessionTokens(currentUsage.total);
         }
+
+        // 有对话后显示清空按钮
+        document.getElementById('docClearChatBtn').style.display = 'inline-flex';
+        chatHistory.scrollTop = chatHistory.scrollHeight;
     }
 }
 
-// Day 22: 笔记本级问答交互
+// ==================== 笔记本问答 ====================
 function toggleNotebookQA() {
     const content = document.getElementById('notebookQAContent');
     const chevron = document.getElementById('notebookQAChevron');
@@ -790,14 +1064,74 @@ function toggleNotebookQA() {
 
 function resetNotebookQA() {
     const input = document.getElementById('notebookQAInput');
-    const answer = document.getElementById('notebookQAAnswer');
-    const answerText = document.getElementById('notebookQAAnswerText');
     if (input) input.value = '';
-    if (answer) answer.style.display = 'none';
-    if (answerText) answerText.value = '';
+    // Day 30：加载该笔记本的对话历史
+    loadNotebookChatHistory(currentNotebookId);
 }
 
-// Day 26: Token 用量卡片渲染
+async function askNotebook() {
+    const input = document.getElementById('notebookQAInput');
+    const question = input.value.trim();
+
+    if (!question) {
+        showToast('请输入问题', 'warning');
+        return;
+    }
+
+    const chatHistory = document.getElementById('notebookChatHistory');
+
+    // 1. 追加用户气泡
+    appendUserBubble(chatHistory, question);
+    input.value = '';
+
+    // 2. 创建 AI 气泡（流式输出）
+    const ai = appendAiBubble(chatHistory);
+    ai.textEl.classList.add('streaming');
+    showToast('AI 正在综合多篇文档思考...', 'info');
+
+    let currentUsage = null;
+
+    try {
+        await askNotebookStreamAPI(
+            currentNotebookId,
+            question,
+            (chunk) => {
+                ai.rawText += chunk;
+                ai.textEl.textContent = ai.rawText;
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            },
+            (usage) => {
+                currentUsage = usage;
+            }
+        );
+
+        showToast('回答完成', 'success');
+    } catch (error) {
+        showToast('回答失败：' + error.message, 'error');
+        ai.rawText = '获取回答失败，请稍后重试。';
+        ai.textEl.textContent = ai.rawText;
+    } finally {
+        ai.textEl.classList.remove('streaming');
+
+        const { answer, citations } = parseCitations(ai.rawText);
+        ai.textEl.textContent = answer;
+
+        if (citations.length > 0) {
+            renderCitationCards(citations, ai.citationEl);
+        }
+
+        if (currentUsage) {
+            ai.tokenEl.innerHTML = renderTokenUsageHtml(currentUsage);
+            ai.tokenEl.style.display = 'block';
+            accumulateSessionTokens(currentUsage.total);
+        }
+
+        document.getElementById('notebookClearChatBtn').style.display = 'inline-flex';
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+    }
+}
+
+// ==================== Token 用量 ====================
 function renderTokenUsageCard(containerId, usage) {
     const container = document.getElementById(containerId);
     if (!container || !usage) return;
@@ -812,7 +1146,6 @@ function renderTokenUsageCard(containerId, usage) {
     container.style.display = 'block';
 }
 
-// Day 26: 会话 Token 累计
 function accumulateSessionTokens(tokens) {
     window.sessionTokenTotal += tokens;
     updateSessionTotalDisplay();
@@ -825,7 +1158,7 @@ function updateSessionTotalDisplay() {
     }
 }
 
-// Day 26: 右侧功能面板 Tab 切换
+// ==================== 右侧功能面板 ====================
 function switchRightPanelTab(tabName) {
     const userSettingsTab = document.getElementById('userSettingsTab');
     const consoleTab = document.getElementById('consoleTab');
@@ -845,103 +1178,67 @@ function switchRightPanelTab(tabName) {
     }
 }
 
-async function askNotebook() {
-    const input = document.getElementById('notebookQAInput');
-    const question = input.value.trim();
-
-    if (!question) {
-        showToast('请输入问题', 'warning');
+// ==================== 新建文档：模式切换 + 文件选择 ====================
+function updateDocCreateModes() {
+    const hasText = document.getElementById('checkText').checked;
+    const hasFile = document.getElementById('checkFile').checked;
+    
+    // 至少勾选一个，如果都取消则自动勾回"输入内容"
+    if (!hasText && !hasFile) {
+        document.getElementById('checkText').checked = true;
+        document.getElementById('docCreateTextSection').style.display = 'block';
         return;
     }
-
-    const answerWrapper = document.getElementById('notebookQAAnswer');
-    const answerEl = document.getElementById('notebookQAAnswerText');
-    const indicator = document.getElementById('notebookStreamIndicator');
-    const tokenUsageEl = document.getElementById('notebookTokenUsage');
-
-    answerWrapper.style.display = 'block';
-    answerEl.value = '';
-    tokenUsageEl.style.display = 'none';
-    tokenUsageEl.innerHTML = '';
-    indicator.style.display = 'inline';
-    answerEl.classList.add('streaming');
-
-    showToast('AI 正在综合多篇文档思考...', 'info');
-
-    let currentUsage = null;
-
-    try {
-        await askNotebookStreamAPI(
-            currentNotebookId,
-            question,
-            (chunk) => {
-                answerEl.value += chunk;
-                answerEl.scrollTop = answerEl.scrollHeight;
-            },
-            (usage) => {
-                currentUsage = usage;
-            }
-        );
-
-        showToast('回答完成', 'success');
-    } catch (error) {
-        showToast('回答失败：' + error.message, 'error');
-        answerEl.value = '获取回答失败，请稍后重试。';
-    } finally {
-        indicator.style.display = 'none';
-        answerEl.classList.remove('streaming');
-
-        const rawAnswer = answerEl.value;
-        const { answer, citations } = parseCitations(rawAnswer);
-
-        if (citations.length > 0) {
-            answerEl.value = answer;
-            const citationContainer = document.getElementById('notebookCitations');
-            renderCitationCards(citations, citationContainer);
-        }
-
-        if (currentUsage) {
-            renderTokenUsageCard('notebookTokenUsage', currentUsage);
-            accumulateSessionTokens(currentUsage.total);
-        }
-    }
-}
-function triggerFileUpload() {
-    document.getElementById('fileInput').click();
+    
+    document.getElementById('docCreateTextSection').style.display = hasText ? 'block' : 'none';
+    document.getElementById('docCreateFileSection').style.display = hasFile ? 'block' : 'none';
 }
 
-async function handleFileUpload(event) {
+function onModalFileSelected(event) {
     const file = event.target.files[0];
     if (!file) return;
     
-    // 支持多种格式
     const supportedFormats = ['.txt', '.md', '.docx', '.pdf'];
     const fileName = file.name.toLowerCase();
     const isSupported = supportedFormats.some(format => fileName.endsWith(format));
-
+    
     if (!isSupported) {
         showToast('请上传 .txt, .md, .docx 或 .pdf 文件', 'error');
+        event.target.value = '';
         return;
     }
     
-    try {
-        showUploadOverlay();
-        const uploadedDoc = await uploadDocumentFileAPI(file, currentNotebookId);
-        hideUploadOverlay();
-        showToast('文件上传成功，摘要生成中...', 'success');
-        event.target.value = '';
-        // 直接把新文档加进列表，不整页刷新（摘要还是"生成中"）
-        currentDocuments.push(uploadedDoc);
-        renderDocumentList();
-        // 启动轮询，等摘要生成好就自动更新
-        pollSummaryReady(uploadedDoc.id, 1, 12);
-    } catch (error) {
-        hideUploadOverlay();
-        showToast('上传失败: ' + error.message, 'error');
+    selectedFile = file;
+    document.getElementById('docCreateUploadArea').style.display = 'none';
+    document.getElementById('selectedFileInfo').style.display = 'flex';
+    document.getElementById('selectedFileName').textContent = file.name;
+    
+    const titleInput = document.getElementById('documentTitle');
+    if (!titleInput.value.trim()) {
+        const dotIndex = file.name.lastIndexOf('.');
+        titleInput.value = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
     }
 }
 
-// Day 25：轮询检查摘要是否异步生成完毕
+function clearSelectedFile() {
+    selectedFile = null;
+    document.getElementById('modalFileInput').value = '';
+    document.getElementById('docCreateUploadArea').style.display = 'flex';
+    document.getElementById('selectedFileInfo').style.display = 'none';
+}
+
+function resetDocCreateModal() {
+    document.getElementById('documentTitle').value = '';
+    document.getElementById('documentContent').value = '';
+    selectedFile = null;
+    document.getElementById('checkText').checked = true;
+    document.getElementById('checkFile').checked = false;
+    updateDocCreateModes();
+    document.getElementById('modalFileInput').value = '';
+    document.getElementById('docCreateUploadArea').style.display = 'flex';
+    document.getElementById('selectedFileInfo').style.display = 'none';
+}
+
 function pollSummaryReady(docId, attempt, maxAttempts) {
     if (attempt > maxAttempts) {
         console.warn('[轮询] 摘要生成超时，docId=' + docId);
@@ -952,14 +1249,21 @@ function pollSummaryReady(docId, attempt, maxAttempts) {
         try {
             const doc = await fetchAPI(`/api/documents/${docId}`);
             if (doc && doc.summary !== '摘要生成中...') {
-                // 摘要已就绪，更新 currentDocuments 中的对应文档
                 const idx = currentDocuments.findIndex(d => d.id === docId);
                 if (idx !== -1) {
                     currentDocuments[idx] = doc;
                 }
-                renderDocumentList();
+                if (notebookDocuments[currentNotebookId]) {
+                    notebookDocuments[currentNotebookId] = currentDocuments;
+                }
+                // 如果在笔记本视图就刷新卡片，如果在文档视图且是当前文档就刷新摘要
+                if (currentDocumentId === docId) {
+                    selectDocument(docId);
+                } else {
+                    renderNotebookTree();
+                    renderDocumentCards();
+                }
             } else {
-                // 还没好，2 秒后再查
                 pollSummaryReady(docId, attempt + 1, maxAttempts);
             }
         } catch (e) {
@@ -996,6 +1300,7 @@ function showRenameNotebookModal() {
 }
 
 function showCreateDocumentModal() {
+    resetDocCreateModal();
     showModal('createDocumentModal');
     setTimeout(() => document.getElementById('documentTitle').focus(), 100);
 }
@@ -1026,14 +1331,7 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-// ==================== Day 24: 引用溯源 ====================
-
-/**
- * 解析带引用标记的 AI 回答
- * @param {string} rawText - AI 返回的原始文本（含引用标记）
- * @param {string} defaultTitle - 默认文档标题（单文档场景使用）
- * @returns {Object} { answer: 正文, citations: [{id, title, snippet}] }
- */
+// ==================== 引用溯源 ====================
 function parseCitations(rawText, defaultTitle) {
     const parts = rawText.split('---');
     let answer = parts[0].trim();
@@ -1041,21 +1339,30 @@ function parseCitations(rawText, defaultTitle) {
 
     if (parts.length > 1) {
         const citationText = parts[1].trim();
-        // 匹配多文档格式：[N] 【文档：标题】原文片段
-        const regex = /\[(\d+)\]\s*【?文档?：?([^】]+)】?\s*(.+)/g;
-        let match;
-        while ((match = regex.exec(citationText)) !== null) {
-            citations.push({
-                id: match[1],
-                title: match[2].trim(),
-                snippet: match[3].trim()
-            });
-        }
-        // 如果没匹配到（可能是单文档格式 [N] 原文片段），再尝试简化格式
-        if (citations.length === 0) {
-            const simpleRegex = /\[(\d+)\]\s*(.+)/g;
-            let simpleMatch;
-            while ((simpleMatch = simpleRegex.exec(citationText)) !== null) {
+
+        // 统一策略：始终按 [N] 前瞻拆分为独立段，确保每个引用各自成块
+        const segments = citationText.split(/(?=\[\d+\])/);
+
+        for (const segment of segments) {
+            const seg = segment.trim();
+            if (!seg) continue;
+
+            // 先尝试匹配【文档：标题】格式
+            const regex = /\[(\d+)\]\s*【?文档?：?([^】]+)】?\s*(.+)/;
+            const match = seg.match(regex);
+            if (match) {
+                citations.push({
+                    id: match[1],
+                    title: match[2].trim(),
+                    snippet: match[3].trim()
+                });
+                continue;
+            }
+
+            // 再尝试简单格式：[N] 原文片段
+            const simpleRegex = /\[(\d+)\]\s*(.+)/;
+            const simpleMatch = seg.match(simpleRegex);
+            if (simpleMatch) {
                 citations.push({
                     id: simpleMatch[1],
                     title: defaultTitle || '参考来源',
@@ -1065,6 +1372,7 @@ function parseCitations(rawText, defaultTitle) {
         }
     }
 
+    // 如果还是没有解析到引用，但正文中有 [N] 标记，生成空片段的引用
     if (citations.length === 0) {
         const inlineRegex = /\[(\d+)\]/g;
         let inlineMatch;
@@ -1080,11 +1388,6 @@ function parseCitations(rawText, defaultTitle) {
     return { answer, citations };
 }
 
-/**
- * 渲染引用来源卡片
- * @param {Array} citations - 引用列表 [{id, title, snippet}]
- * @param {HTMLElement} container - 容器元素
- */
 function renderCitationCards(citations, container) {
     if (!citations || citations.length === 0) {
         container.innerHTML = '';
@@ -1092,16 +1395,22 @@ function renderCitationCards(citations, container) {
         return;
     }
 
-    let html = '<div class="citation-header">参考来源</div>';
-    html += '<div class="citation-list">';
+    let html = '<div class="citation-header">';
+    html += '<span>参考来源</span>';
+    html += '<button class="citation-toggle-btn" onclick="toggleCitationList(this)">展开</button>';
+    html += '</div>';
+    html += '<div class="citation-list" style="display:none">';
 
     citations.forEach(cite => {
         html += `
             <div class="citation-card" data-cite-id="${cite.id}">
                 <div class="citation-number">[${cite.id}]</div>
                 <div class="citation-content">
-                    <div class="citation-title">${escapeHtml(cite.title)}</div>
-                    <div class="citation-snippet">${escapeHtml(cite.snippet)}</div>
+                    <div class="citation-title-row">
+                        <span class="citation-title">${escapeHtml(cite.title)}</span>
+                        <button class="citation-toggle-btn" onclick="toggleCitationSnippet(this)">展开</button>
+                    </div>
+                    <div class="citation-snippet citation-snippet-collapsed">${escapeHtml(cite.snippet)}</div>
                 </div>
             </div>
         `;
@@ -1110,6 +1419,36 @@ function renderCitationCards(citations, container) {
     html += '</div>';
     container.innerHTML = html;
     container.style.display = 'block';
+}
+
+/** 切换单条引用片段的展开/折叠 */
+function toggleCitationSnippet(btn) {
+    const card = btn.closest('.citation-card');
+    const snippet = card.querySelector('.citation-snippet');
+    const isCollapsed = snippet.classList.contains('citation-snippet-collapsed');
+
+    if (isCollapsed) {
+        snippet.classList.remove('citation-snippet-collapsed');
+        btn.textContent = '收起';
+    } else {
+        snippet.classList.add('citation-snippet-collapsed');
+        btn.textContent = '展开';
+    }
+}
+
+/** 切换整个参考来源列表的展开/折叠 */
+function toggleCitationList(btn) {
+    const container = btn.closest('.citations-container');
+    const list = container.querySelector('.citation-list');
+    const isHidden = list.style.display === 'none';
+
+    if (isHidden) {
+        list.style.display = '';
+        btn.textContent = '收起';
+    } else {
+        list.style.display = 'none';
+        btn.textContent = '展开';
+    }
 }
 
 function formatDate(dateString) {
@@ -1131,7 +1470,6 @@ function formatFileSize(size) {
 }
 
 // ==================== 摘要相关功能 ====================
-
 async function generateSummary(documentId, event) {
     if (event) event.stopPropagation();
     
@@ -1140,7 +1478,9 @@ async function generateSummary(documentId, event) {
         await generateSummaryAPI(documentId);
         showToast('摘要生成成功', 'success');
         currentDocuments = await getDocumentsByNotebook(currentNotebookId);
-        renderDocumentList();
+        notebookDocuments[currentNotebookId] = currentDocuments;
+        renderNotebookTree();
+        renderDocumentCards();
     } catch (error) {
         showToast('摘要生成失败: ' + error.message, 'error');
     }
@@ -1170,14 +1510,12 @@ function toggleSummaryPreview(documentId, event) {
 }
 
 // ==================== 上传进度遮罩 ====================
-
 function showUploadOverlay() {
     document.getElementById('uploadOverlay').style.display = 'flex';
     const bar = document.getElementById('progressBar');
     bar.style.width = '0%';
     bar.style.transition = 'none';
     
-    // 强制重绘
     void bar.offsetWidth;
     
     bar.style.transition = 'width 3s ease-out';
