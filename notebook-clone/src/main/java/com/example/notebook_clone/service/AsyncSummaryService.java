@@ -47,7 +47,17 @@ public class AsyncSummaryService {
             log.info("[异步摘要] 文档 {} 摘要生成成功", documentId);
 
         } catch (Exception e) {
-            log.error("[异步摘要] 文档 {} 摘要生成失败: {}", documentId, e.getMessage());
+            log.error("[异步摘要] 文档 {} 摘要生成失败: {}", documentId, e.getMessage(), e);
+            // 失败时更新 summary 字段，避免前端永远显示"摘要生成中..."
+            try {
+                Document document = documentRepository.findById(documentId).orElse(null);
+                if (document != null) {
+                    document.setSummary("摘要生成失败，请点击重新生成");
+                    documentRepository.save(document);
+                }
+            } catch (Exception saveErr) {
+                log.error("[异步摘要] 更新失败状态也出错了: {}", saveErr.getMessage());
+            }
         }
     }
 }

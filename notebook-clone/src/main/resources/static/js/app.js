@@ -38,7 +38,7 @@ function showMainApp() {
     document.getElementById('authPage').style.display = 'none';
     document.getElementById('mainApp').style.display = 'flex';
     document.getElementById('currentUsername').textContent = currentUser?.username || '用户';
-    loadNotebooks();
+    loadNotebooks().then(() => restoreFromHash());
 }
 
 function showRegister() {
@@ -407,6 +407,7 @@ function showEmptyView() {
     document.getElementById('emptyView').style.display = 'flex';
     document.getElementById('notebookView').style.display = 'none';
     document.getElementById('documentView').style.display = 'none';
+    updateHash();
 }
 
 function showNotebookView() {
@@ -438,6 +439,45 @@ function showDocumentView() {
     document.getElementById('notebookView').style.display = 'none';
     document.getElementById('documentView').style.display = 'flex';
     renderNotebookTree();
+}
+
+// ==================== Hash 路由（刷新保持视图）====================
+
+/** 将当前视图位置写入 URL hash（用 replaceState 避免产生大量历史记录）*/
+function updateHash() {
+    if (currentDocumentId && currentNotebookId) {
+        history.replaceState(null, '', `#notebook/${currentNotebookId}/document/${currentDocumentId}`);
+    } else if (currentNotebookId) {
+        history.replaceState(null, '', `#notebook/${currentNotebookId}`);
+    } else {
+        history.replaceState(null, '', '#');
+    }
+}
+
+/** 页面加载后从 URL hash 恢复视图状态 */
+async function restoreFromHash() {
+    const hash = window.location.hash;
+    if (!hash || hash === '#') return;
+
+    // 解析 #notebook/3 或 #notebook/3/document/5
+    const match = hash.match(/^#notebook\/(\d+)(?:\/document\/(\d+))?$/);
+    if (!match) return;
+
+    const notebookId = parseInt(match[1]);
+    const documentId = match[2] ? parseInt(match[2]) : null;
+
+    // 确认笔记本存在
+    const notebook = notebooks.find(n => n.id === notebookId);
+    if (!notebook) return;
+
+    await selectNotebook(notebookId);
+
+    if (documentId) {
+        const doc = currentDocuments.find(d => d.id === documentId);
+        if (doc) {
+            await selectDocument(documentId);
+        }
+    }
 }
 
 // ==================== 树形侧栏渲染 ====================
@@ -474,7 +514,7 @@ function renderNotebookTree() {
             for (const doc of docs) {
                 const isDocActive = doc.id === currentDocumentId;
                 html += `<div class="tree-document-item ${isDocActive ? 'active' : ''}" 
-                               onclick="selectDocument(${doc.id}, event)" 
+                               onclick="selectDocument(${doc.id}, event, ${notebook.id})" 
                                title="${escapeHtml(doc.title)}">
                     <span class="tree-doc-icon">📄</span>
                     <span class="tree-doc-name">${escapeHtml(doc.title)}</span>
@@ -573,6 +613,8 @@ async function selectNotebook(id) {
         
         document.getElementById('btnRename').disabled = false;
         document.getElementById('btnDeleteNotebook').disabled = false;
+        
+        updateHash();
     } catch (error) {
         showToast('加载文档失败: ' + error.message, 'error');
     }
@@ -588,8 +630,14 @@ function toggleNotebook(id, event) {
     renderNotebookTree();
 }
 
-async function selectDocument(id, event) {
+async function selectDocument(id, event, notebookId) {
     if (event) event.stopPropagation();
+    
+    // 跨笔记本点击：先切换到文档所属的笔记本，再选中该文档
+    if (notebookId && notebookId !== currentNotebookId) {
+        await selectNotebook(notebookId);
+    }
+    
     currentDocumentId = id;
     
     const doc = currentDocuments.find(d => d.id === id);
@@ -607,7 +655,16 @@ async function selectDocument(id, event) {
         summaryBox.style.display = 'block';
         summaryText.textContent = '🤖 AI 摘要正在生成中，请稍后刷新...';
         summaryText.classList.add('summary-hint');
-        regenBtn.style.display = 'none';
+        regenBtn.style.display = 'inline-flex';
+        regenBtn.textContent = '🔄 手动生成';
+        regenBtn.onclick = () => regenerateSummary(id);
+    } else if (doc.summary && doc.summary.startsWith('摘要生成失败')) {
+        summaryBox.style.display = 'block';
+        summaryText.textContent = '⚠️ ' + doc.summary;
+        summaryText.classList.add('summary-hint');
+        regenBtn.style.display = 'inline-flex';
+        regenBtn.textContent = '🔄 重新生成';
+        regenBtn.onclick = () => regenerateSummary(id);
     } else if (doc.summary && doc.summary !== '内容过短，无需摘要') {
         summaryBox.style.display = 'block';
         summaryText.textContent = doc.summary;
@@ -650,11 +707,14 @@ async function selectDocument(id, event) {
 
     // Day 30：加载该文档的对话历史
     loadDocChatHistory(id);
+
+    updateHash();
 }
 
 function backToNotebook() {
     currentDocumentId = null;
     showNotebookView();
+    updateHash();
 }
 
 function toggleDocContent() {
@@ -679,12 +739,16 @@ async function createNotebook() {
     }
     
     try {
-        await createNotebookAPI({ name, description });
+        const newNotebook = await createNotebookAPI({ name, description });
         closeModal('createNotebookModal');
         document.getElementById('notebookName').value = '';
         document.getElementById('notebookDescription').value = '';
         showToast('笔记本创建成功', 'success');
         await loadNotebooks();
+        // 自动选中新建的笔记本，让用户立即看到内容
+        if (newNotebook && newNotebook.id) {
+            await selectNotebook(newNotebook.id);
+        }
     } catch (error) {
         showToast('创建失败: ' + error.message, 'error');
     }
@@ -823,6 +887,8 @@ async function deleteDocument(idOrEvent, event) {
         } else {
             showNotebookView();
         }
+        
+        updateHash();
     } catch (error) {
         showToast('删除失败: ' + error.message, 'error');
     }
@@ -1481,6 +1547,10 @@ async function generateSummary(documentId, event) {
         notebookDocuments[currentNotebookId] = currentDocuments;
         renderNotebookTree();
         renderDocumentCards();
+        // 如果正在文档详情页查看该文档，刷新摘要显示
+        if (currentDocumentId === documentId) {
+            selectDocument(documentId);
+        }
     } catch (error) {
         showToast('摘要生成失败: ' + error.message, 'error');
     }

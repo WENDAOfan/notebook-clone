@@ -508,3 +508,179 @@ RAG 管线全流程：
 | 流式回答保存了不完整的回答 | 中途断流 | 只在流完整结束后保存 |
 | 删除文档后对话历史残留 | 没有级联删除 | 删除文档时调用 `clearDocHistory` |
 | 数据库越来越大 | 历史消息没有过期清理 | `@Scheduled` 每天清理 7 天前的记录 |
+
+---
+
+# Day 30 代码审查：待解决问题清单
+
+> 下面是对 `notebook-clone` 项目（Day 30 对话历史 + RAG）全面审查后发现的潜在问题，按 **严重 / 中等 / 建议** 三级分类。建议按优先级逐个修复。
+
+## 一、严重问题（优先修复）
+
+### 1. RAG 检索未按 documentId/notebookId 过滤，存在跨文档/跨笔记本污染
+- **涉及文件**：`service/AiChatService.java:45-60`
+- **问题**：`retrieveRelevantChunks()` 直接对全量向量库做 `similaritySearch`，没有按当前文档或笔记本过滤。
+- **影响**：用户问文档 A 的问题，可能返回文档 B 或笔记本 C 的内容，答案来源错误。
+- **修复方向**：在 chunk 元数据中补充 `notebookId`，检索时用 `SearchRequest.filterExpression(...)` 过滤；生产环境迁移到 pgvector / Redis Vector Store。
+
+### 2. SimpleVectorStore 是内存存储，重启后向量丢失且不会从数据库重载
+- **涉及文件**：`config/VectorStoreConfig.java:48-51`
+- **问题**：`SimpleVectorStore` 存在 JVM 内存中，重启清空；启动时也没有从 `document` 表重新分块加载。
+- **影响**：每次部署/重启后 RAG 失效，自动降级为“全文截断”，长文档直接塞 Prompt。
+- **修复方向**：开发环境保留，但加启动重载逻辑（扫描所有文档异步重新 `chunkAndStoreAsync`）；生产环境换持久化向量库。
+
+### 3. 手动创建的文本文档永远不会被分块/向量化
+- **涉及文件**：`controller/DocumentController.java:64-85`
+- **问题**：`createDocument()` 只保存数据库记录，没有调用 `chunkAndStoreAsync()` 和 `generateSummaryAsync()`。
+- **影响**：手动输入的长文档无法使用 RAG，问答时只能全文截断；也没有 AI 摘要。
+- **修复方向**：在 `createDocument` 保存后同样异步触发摘要生成和分块向量化。
+
+### 4. 删除笔记本/用户时，向量块和对话历史没有被级联清理
+- **涉及文件**：`controller/NotebookController.java:103-122`、`controller/UserController.java:53-62`、`entity/Notebook.java:37`、`entity/User.java:39`
+- **问题**：JPA 级联删除文档/用户时，不会调用 `deleteDocumentChunks()`，也不会清理对话历史。
+- **影响**：向量库残留“僵尸”块，导致检索污染、内存膨胀；`chat_message` 成为孤儿记录。
+- **修复方向**：删除前先查出旗下所有文档 ID，逐个清理向量块和对话历史，再删实体。
+
+### 5. 流式接口在 EventLoop 线程中同步调用数据库保存历史
+- **涉及文件**：`service/AiChatService.java:388-399, 518-529`
+- **问题**：`concatWith(Mono.fromCallable(...))` 里直接调用 `chatHistoryService.saveTurn()`，阻塞 JDBC 操作运行在 Netty EventLoop 上。
+- **影响**：高并发或数据库慢时阻塞 EventLoop，导致所有 WebFlux 响应卡顿甚至假死。
+- **修复方向**：使用 `.subscribeOn(Schedulers.boundedElastic())`，或改由异步线程池保存。
+
+### 6. `application.properties` 中硬编码敏感信息
+- **涉及文件**：`resources/application.properties:5,20,31`
+- **问题**：MySQL 密码、DeepSeek API Key、智谱 AI API Key 全部明文硬编码。
+- **影响**：代码一旦入 Git 立刻泄露密钥；所有环境共用同一套密钥。
+- **修复方向**：使用环境变量，例如 `${DEEPSEEK_API_KEY:}`，本地用 `.env` 或 IDE 环境变量注入。
+
+### 7. `/test/**` 接口未授权且暴露向量和分块触发能力
+- **涉及文件**：`config/SecurityConfig.java:47`、`controller/ChunkTestController.java`
+- **问题**：`/test/**` 全部放行，`ChunkTestController` 可无权限触发任意文档分块、搜索全局向量库。
+- **影响**：未登录用户也能触发分块和向量搜索，造成信息泄露和算力滥用。
+- **修复方向**：开发完成后删除测试 Controller；或要求登录并校验文档归属。
+
+### 8. `UserController` 存在超级管理员接口且创建用户时密码明文存储
+- **涉及文件**：`controller/UserController.java:24-62`
+- **问题**：所有 `/api/users` 接口只要登录就能访问；`createUser()` 密码未经过 `PasswordEncoder` 加密。
+- **影响**：普通用户可删其他用户及全部数据；新用户密码明文存储。
+- **修复方向**：加角色权限控制（ADMIN），或仅由 `AuthController` 管理用户；创建/修改用户必须 `PasswordEncoder.encode()`。
+
+### 9. JWT Secret 使用弱随机字符串且所有环境相同
+- **涉及文件**：`resources/application.properties:13`、`util/JwtUtil.java:17`
+- **问题**：`jwt.secret` 是硬编码示例字符串。
+- **影响**：密钥可预测，Token 易被伪造，身份认证失效。
+- **修复方向**：从环境变量读取，生产环境使用至少 256 位随机密钥，不同环境不同密钥。
+
+---
+
+## 二、中等问题（建议近期修复）
+
+### 10. 文档删除时向量块清理依赖 `chunkCount`，存在残留风险
+- **涉及文件**：`service/DocumentChunkService.java:110-134`
+- **问题**：按 `chunkCount` 生成 ID 再删除，若实际块数不一致会漏删或删错。
+- **修复方向**：删除前用 `filterExpression(documentId == x)` 查出所有相关块 ID 再删。
+
+### 11. 向量块 ID 是确定性生成，重新索引后旧块可能残留
+- **涉及文件**：`service/DocumentChunkService.java:153-155`
+- **问题**：`buildChunkId(documentId, chunkIndex)` 只依赖下标。内容变短时旧高下标块会残留。
+- **修复方向**：重新索引时先彻底删除旧块再写入；或用 UUID + 文档版本号作为块 ID。
+
+### 12. 对话历史没有 Token/长度预算控制，可能撑爆模型上下文
+- **涉及文件**：`service/ChatHistoryService.java:48-61`、`service/AiChatService.java:86,162,320,415`
+- **问题**：`MAX_ROUNDS=10` 只限制轮数，不限制总 Token；单条消息也可能很长。
+- **修复方向**：按总 Token 数或字符数截断历史，优先保留最近消息。
+
+### 13. 同一轮对话中 user/assistant 使用相同 `createTime`，排序可能不稳定
+- **涉及文件**：`service/ChatHistoryService.java:75-104`
+- **问题**：用户消息和 AI 回答的 `createTime` 都是 `LocalDateTime.now()`，高并发或批量写入时顺序可能错乱。
+- **修复方向**：给 assistant 消息加微小时间偏移，或按 `id` 自增作为第二排序字段。
+
+### 14. `saveTurn` 中先保存后截断，高并发时可能出现竞态
+- **涉及文件**：`service/ChatHistoryService.java:75-117`
+- **问题**：截断逻辑是“读取全部 → 删除前 N 条”，并发下可能都保留后 `maxMessages` 条，结果超出限制。
+- **修复方向**：使用数据库级删除，例如 `DELETE ... WHERE id <= (SELECT id ... LIMIT 1 OFFSET ?)`。
+
+### 15. 上传文件缺少服务端类型校验、大小提示和文件名安全处理
+- **涉及文件**：`controller/DocumentController.java:104-141`、`service/DocumentExtractService.java:22-57`
+- **问题**：仅按扩展名判断类型，未校验 MIME、文件头、处理路径穿越文件名。
+- **修复方向**：服务端校验扩展名、文件大小、Content-Type；使用 `FilenameUtils.getName()` 处理文件名；解析设置超时和内存上限。
+
+### 16. 同步问答接口重试覆盖不全，流式接口无重试
+- **涉及文件**：`service/AiChatService.java:71-137, 148-244, 307-400, 402-530`
+- **问题**：仅对 `RestClientException` 重试；流式方法没有 `@Retryable`，超时/限流等可能直接失败。
+- **修复方向**：统一捕获 AI 调用异常，增加超时配置和指数退避重试；流式接口 `onErrorResume` 返回友好 SSE 错误事件。
+
+### 17. 前端 `parseCitations` 按 `---` 分割，可能误伤正常 Markdown 内容
+- **涉及文件**：`resources/static/js/app.js:1335-1389`
+- **问题**：AI 回答中的 `---` 分隔线会被当成引用分隔符。
+- **修复方向**：使用更严格的引用分隔标记，例如 `---SOURCES---`，或要求 AI 输出 JSON 格式引用。
+
+### 18. 前端流式输出期间没有禁用发送按钮，可重复触发请求
+- **涉及文件**：`resources/static/js/app.js:982-1048, 1072-1132`
+- **问题**：流式响应过程中没有“回答中”状态，用户可反复点击发送。
+- **修复方向**：增加 `isAnswering` 全局状态，流式期间禁用输入框和发送按钮，并支持 AbortController 取消上一个请求。
+
+### 19. 前端未正确取消/管理 SSE 请求，切换页面时可能造成内存泄漏
+- **涉及文件**：`resources/static/js/app.js:305-403`
+- **问题**：`fetchStream` 没有 `AbortController`，切换页面或重发问题时前一个流仍在后台读取。
+- **修复方向**：传入 `AbortSignal`，在切换笔记本、关闭文档、重发问题时 `abort()`。
+
+### 20. `ddl-auto=update` 和 `show-sql=true` 不适合生产环境
+- **涉及文件**：`resources/application.properties:8,10`
+- **问题**：启动时自动改表结构；控制台打印完整 SQL。
+- **修复方向**：生产环境使用 `validate` 或 `none`，由 Flyway/Liquibase 管理迁移；关闭 `show-sql`。
+
+### 21. `GlobalExceptionHandler` 覆盖不全，部分异常直接暴露堆栈
+- **涉及文件**：`common/GlobalExceptionHandler.java`
+- **问题**：只处理了少数异常；`RuntimeException` 默认返回 200 但 code=400 也可能让前端困惑。
+- **修复方向**：补充常见异常处理器；使用自定义业务异常；生产环境不返回堆栈。
+
+---
+
+## 三、建议项（可优化）
+
+### 22. Controller 与 Service 参数传递风格不一致
+- **涉及文件**：`controller/DocumentController.java:221-288`、`controller/NotebookController.java:124-188`
+- **建议**：同步接口用 `@RequestBody`，流式接口用 `@RequestParam`，建议统一封装 DTO。
+
+### 23. 多处权限校验写法不统一
+- **涉及文件**：`controller/DocumentController.java:195-217`、`controller/NotebookController.java:169-175`
+- **建议**：统一使用 `findByIdAndUserId` / `existsByIdAndUserId`，避免触发懒加载和 N+1。
+
+### 24. 实体类使用 `@Data` 可能带来潜在风险
+- **涉及文件**：所有 `entity/*.java`
+- **建议**：JPA 实体建议用 `@Getter/@Setter`，显式排除关联字段的 `toString/equals/hashCode`。
+
+### 25. JWT 过滤器使用 `System.out.println` 而非日志框架
+- **涉及文件**：`util/JwtUtil.java:86-94`
+- **建议**：改为 `log.warn/error`，便于统一收集和告警。
+
+### 26. 日志输出中打印用户问题和完整 AI 回答，存在隐私风险
+- **建议**：建立规范——生产环境不打印完整对话内容，最多记录长度和会话 ID。
+
+### 27. 缺少限流/熔断，AI 接口可能被滥用
+- **建议**：引入 Bucket4j / Sentinel / Resilience4j，对上传、问答、摘要等接口按用户限流。
+
+### 28. `AsyncConfig` 线程池缺少拒绝策略细节和优雅关闭等待时间
+- **涉及文件**：`config/AsyncConfig.java:32-43`
+- **建议**：补充 `setAwaitTerminationSeconds`、`setWaitForTasksToCompleteOnShutdown` 等优雅关闭配置。
+
+### 29. 前端 Token 费用按固定单价计算，不准确
+- **涉及文件**：`resources/static/js/app.js:969-979, 1135-1147`
+- **建议**：按模型和输入/输出分别计价，或仅显示 Token 数不显示费用。
+
+### 30. 前端 `loadDocChatHistory` 在文档内容较长时全量渲染，未分页
+- **涉及文件**：`resources/static/js/app.js:899-935`
+- **建议**：后端接口支持分页，前端滚动加载或限制默认展示最近 N 轮。
+
+---
+
+## 四、最需要优先处理的 Top 5
+
+1. **RAG 检索未按文档/笔记本过滤** — 跨文档污染，答案来源错误。
+2. **SimpleVectorStore 内存丢失且不重载** — 重启后 RAG 失效。
+3. **手动创建的文本文档未触发分块/摘要** — 功能缺失。
+4. **删除笔记本/用户时向量与历史未清理** — 数据污染和孤儿记录。
+5. **流式接口在 EventLoop 中阻塞保存历史** — 高并发下可用性风险。
+
+> 建议先解决 Top 5，再逐步处理中等问题，最后按需优化建议项。

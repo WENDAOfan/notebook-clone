@@ -5,10 +5,13 @@ import com.example.notebook_clone.repository.DocumentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
+import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +43,10 @@ public class DocumentChunkService {
 
     private final VectorStore vectorStore;
     private final DocumentRepository documentRepository;
+
+    // 向量文件持久化路径（和 VectorStoreConfig 共用同一个配置项）
+    @Value("${vector.store.file:vector-store.json}")
+    private String vectorStoreFile;
 
     /**
      * 异步对文档进行分块并向量化存储
@@ -88,6 +95,13 @@ public class DocumentChunkService {
 
             // 4. 存入向量存储（内部自动调 Embedding API 生成向量）
             vectorStore.add(enrichedChunks);
+
+            // 4.5 持久化到文件（过渡方案：兜住重启丢失，pgvector 接入后可删除）
+            if (vectorStore instanceof SimpleVectorStore simpleStore) {
+                File file = new File(vectorStoreFile);
+                simpleStore.save(file);
+                log.info("[向量存储] 已保存到文件: {}", file.getAbsolutePath());
+            }
 
             // 5. 更新文档的分块数量
             document.setChunkCount(enrichedChunks.size());

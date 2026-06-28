@@ -36,12 +36,12 @@ public class Document {
     @NotBlank(message = "文档标题不能为空")
     private String title;
 
-    // 🌟 核心魔法：默认的 String 在 MySQL 里只能存 255 个字符
-    // 加上这个注解，告诉 MySQL 把这个字段设为 LONGTEXT，可以存 40 亿个字符！
-    @Column(columnDefinition = "LONGTEXT")
+    // PostgreSQL 的 TEXT 类型可存无限文本（不像 MySQL 需要 LONGTEXT）
+    // 注意：不能用 @Lob，PostgreSQL 的 @Lob 会走 Large Object 子系统，导致 JSON 序列化时报错
+    @Column(columnDefinition = "TEXT")
     private String content;
     // ===== Day 20 新增：AI 生成的文档摘要 =====
-    @Column(columnDefinition = "LONGTEXT")
+    @Column(columnDefinition = "TEXT")
     private String summary;
     // =========================================
     private LocalDateTime createTime;

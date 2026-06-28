@@ -10,6 +10,9 @@ import org.springframework.ai.zhipuai.api.ZhiPuAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import lombok.extern.slf4j.Slf4j;
+
+import java.io.File;
 
 /**
  * Day 28：向量存储配置
@@ -18,8 +21,10 @@ import org.springframework.context.annotation.Configuration;
  *   - Chat 模型继续用 DeepSeek（spring.ai.openai.*）
  *   - Embedding 模型用智谱 AI（spring.ai.zhipuai.*）
  *
- * SimpleVectorStore 是内存向量存储，重启后数据丢失，仅用于开发验证。
+ * SimpleVectorStore 是内存向量存储，加文件持久化兜住重启丢失（过渡方案）。
+ * 后续接入 pgvector 后可删除文件持久化逻辑。
  */
+@Slf4j
 @Configuration
 public class VectorStoreConfig {
 
@@ -28,6 +33,10 @@ public class VectorStoreConfig {
 
     @Value("${spring.ai.zhipuai.embedding.options.model:embedding-3}")
     private String model;
+
+    // 向量文件持久化路径（项目根目录下的 vector-store.json）
+    @Value("${vector.store.file:vector-store.json}")
+    private String vectorStoreFile;
 
     /**
      * 创建智谱 AI Embedding 模型
@@ -42,11 +51,21 @@ public class VectorStoreConfig {
     }
 
     /**
-     * 创建内存向量存储（开发阶段用，重启后数据丢失）
-     * 生产环境可换 pgvector / Redis Vector Store
+     * 创建内存向量存储 + 文件持久化
+     * 启动时从文件加载已有向量（如果文件存在），分块后保存到文件
      */
     @Bean
     public VectorStore vectorStore(EmbeddingModel embeddingModel) {
-        return SimpleVectorStore.builder(embeddingModel).build();
+        SimpleVectorStore store = SimpleVectorStore.builder(embeddingModel).build();
+
+        File file = new File(vectorStoreFile);
+        if (file.exists()) {
+            store.load(file);
+            log.info("[向量存储] 从文件加载向量: {}", file.getAbsolutePath());
+        } else {
+            log.info("[向量存储] 向量文件不存在，从空库启动: {}", file.getAbsolutePath());
+        }
+
+        return store;
     }
 }

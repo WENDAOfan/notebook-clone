@@ -30,7 +30,7 @@ public class ChatMessage {
     private String role;
 
     /** 消息内容 */
-    @Column(nullable = false, columnDefinition = "LONGTEXT")
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
     /** 关联的文档 ID（文档级对话时） */
