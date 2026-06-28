@@ -26,7 +26,7 @@ public class ChatHistoryService {
     private final ChatMessageRepository chatMessageRepository;
 
     /** 最大保留轮数（一问一答算 1 轮 = 2 条消息） */
-    private static final int MAX_ROUNDS = 10;
+    private static final int MAX_ROUNDS = 1000;  // Day 30.5：从 10 调大到 1000，配合上下文压缩服务
     /** 历史保留天数 */
     private static final int HISTORY_DAYS = 7;
 

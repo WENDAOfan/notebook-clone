@@ -27,12 +27,15 @@ public class AiChatService {
     private final ChatClient chatClient;
     private final VectorStore vectorStore;
     private final ChatHistoryService chatHistoryService;  // Day 30 新增：对话历史
+    private final ContextCompressionService compressionService;  // Day 30.5 新增：上下文压缩
 
     public AiChatService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore,
-                         ChatHistoryService chatHistoryService) {
+                         ChatHistoryService chatHistoryService,
+                         ContextCompressionService compressionService) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
         this.chatHistoryService = chatHistoryService;
+        this.compressionService = compressionService;
     }
 
     /**
@@ -84,6 +87,12 @@ public class AiChatService {
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildDocSessionId(documentId, userId);
         List<Message> history = chatHistoryService.getHistoryAsMessages(sessionId);
+        // ================================
+
+        // ===== Day 30.5：上下文压缩 =====
+        if (compressionService.needsCompression(history)) {
+            history = compressionService.compress(history);
+        }
         // ================================
 
         // ===== Day 29：RAG 检索替代全文塞入 =====
@@ -160,6 +169,12 @@ public class AiChatService {
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildNotebookSessionId(notebookId, userId);
         List<Message> history = chatHistoryService.getHistoryAsMessages(sessionId);
+        // ================================
+
+        // ===== Day 30.5：上下文压缩 =====
+        if (compressionService.needsCompression(history)) {
+            history = compressionService.compress(history);
+        }
         // ================================
 
         // ===== Day 29：用 RAG 替代"拼接所有文档" =====
@@ -320,6 +335,12 @@ public class AiChatService {
         List<Message> history = chatHistoryService.getHistoryAsMessages(sessionId);
         // ================================
 
+        // ===== Day 30.5：上下文压缩 =====
+        if (compressionService.needsCompression(history)) {
+            history = compressionService.compress(history);
+        }
+        // ================================
+
         // ===== Day 29：RAG 检索替代全文塞入（流式）=====
         List<String> relevantChunks = retrieveRelevantChunks(question, 5);
 
@@ -413,6 +434,12 @@ public class AiChatService {
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildNotebookSessionId(notebookId, userId);
         List<Message> history = chatHistoryService.getHistoryAsMessages(sessionId);
+        // ================================
+
+        // ===== Day 30.5：上下文压缩 =====
+        if (compressionService.needsCompression(history)) {
+            history = compressionService.compress(history);
+        }
         // ================================
 
         // ===== Day 29：用 RAG 替代"拼接所有文档"（流式）=====

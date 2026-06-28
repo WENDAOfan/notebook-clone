@@ -953,7 +953,7 @@ function renderChatHistory(history, container, defaultTitle) {
         } else {
             const ai = appendAiBubble(container);
             const { answer, citations } = parseCitations(msg.content, defaultTitle);
-            ai.textEl.textContent = answer;
+            ai.textEl.innerHTML = marked.parse(answer);
             if (citations.length > 0) {
                 renderCitationCards(citations, ai.citationEl);
             }
@@ -1095,7 +1095,7 @@ async function askDocument() {
         // 解析引用并替换文本
         const currentDocTitle = document.getElementById('docViewTitle').textContent;
         const { answer, citations } = parseCitations(ai.rawText, currentDocTitle);
-        ai.textEl.textContent = answer;
+        ai.textEl.innerHTML = marked.parse(answer);
 
         if (citations.length > 0) {
             renderCitationCards(citations, ai.citationEl);
@@ -1180,7 +1180,7 @@ async function askNotebook() {
         ai.textEl.classList.remove('streaming');
 
         const { answer, citations } = parseCitations(ai.rawText);
-        ai.textEl.textContent = answer;
+        ai.textEl.innerHTML = marked.parse(answer);
 
         if (citations.length > 0) {
             renderCitationCards(citations, ai.citationEl);
@@ -1602,3 +1602,55 @@ function hideUploadOverlay() {
         bar.style.width = '0%';
     }, 400);
 }
+
+// ==================== 拖动分隔条调整面板宽度 ====================
+(function initResizeHandles() {
+    const sidebar = document.querySelector('.sidebar');
+    const rightPanel = document.querySelector('.right-panel');
+    const leftHandle = document.getElementById('resizeLeft');
+    const rightHandle = document.getElementById('resizeRight');
+
+    if (!leftHandle || !rightHandle || !sidebar || !rightPanel) return;
+
+    let isDragging = false;
+    let currentHandle = null;
+    let startX = 0;
+    let startWidth = 0;
+
+    function onMouseDown(e, handle, panel, isRight) {
+        isDragging = true;
+        currentHandle = { handle, panel, isRight };
+        startX = e.clientX;
+        startWidth = panel.getBoundingClientRect().width;
+        handle.classList.add('active');
+        document.body.classList.add('no-select');
+        e.preventDefault();
+    }
+
+    leftHandle.addEventListener('mousedown', (e) => onMouseDown(e, leftHandle, sidebar, false));
+    rightHandle.addEventListener('mousedown', (e) => onMouseDown(e, rightHandle, rightPanel, true));
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging || !currentHandle) return;
+        const dx = e.clientX - startX;
+        let newWidth;
+        if (currentHandle.isRight) {
+            // 右侧面板：鼠标左移 → 面板变宽
+            newWidth = startWidth - dx;
+        } else {
+            // 左侧面板：鼠标右移 → 面板变宽
+            newWidth = startWidth + dx;
+        }
+        currentHandle.panel.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!isDragging) return;
+        isDragging = false;
+        if (currentHandle) {
+            currentHandle.handle.classList.remove('active');
+        }
+        currentHandle = null;
+        document.body.classList.remove('no-select');
+    });
+})();

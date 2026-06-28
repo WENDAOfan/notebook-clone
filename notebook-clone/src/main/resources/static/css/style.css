@@ -187,9 +187,35 @@ body {
     overflow: hidden;
 }
 
+/* 拖动分隔条 */
+.resize-handle {
+    width: 4px;
+    cursor: col-resize;
+    background: var(--color-border);
+    flex-shrink: 0;
+    transition: background 0.15s;
+    position: relative;
+}
+.resize-handle:hover,
+.resize-handle.active {
+    background: var(--color-primary);
+}
+/* 拖动时防止文字被选中 */
+body.no-select {
+    user-select: none;
+    -webkit-user-select: none;
+}
+body.no-select iframe,
+body.no-select .content {
+    pointer-events: none;
+}
+
 /* ==================== 左侧边栏 ==================== */
 .sidebar {
     width: 280px;
+    min-width: 180px;
+    max-width: 500px;
+    flex-shrink: 0;
     background-color: var(--color-bg-secondary);
     border-right: 1px solid var(--color-border);
     display: flex;
@@ -1258,7 +1284,8 @@ input:checked + .slider:before {
         margin-left: 0;
     }
     
-    .right-panel {
+    .right-panel,
+    .resize-handle {
         display: none;
     }
 }
@@ -1583,6 +1610,9 @@ input:checked + .slider:before {
 /* ==================== 右侧功能面板 ==================== */
 .right-panel {
     width: 300px;
+    min-width: 200px;
+    max-width: 500px;
+    flex-shrink: 0;
     background-color: var(--color-bg-secondary);
     border-left: 1px solid var(--color-border);
     display: flex;
@@ -1840,6 +1870,92 @@ input:checked + .slider:before {
     color: var(--color-text-primary);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-medium) var(--radius-medium) var(--radius-medium) 4px;
+    white-space: normal;
+}
+
+/* Markdown 渲染样式（AI 气泡内） */
+.chat-bubble.assistant .chat-text h1,
+.chat-bubble.assistant .chat-text h2,
+.chat-bubble.assistant .chat-text h3,
+.chat-bubble.assistant .chat-text h4 {
+    margin: 12px 0 6px;
+    font-weight: 600;
+    line-height: 1.4;
+}
+.chat-bubble.assistant .chat-text h1 { font-size: 18px; }
+.chat-bubble.assistant .chat-text h2 { font-size: 16px; }
+.chat-bubble.assistant .chat-text h3 { font-size: 15px; }
+.chat-bubble.assistant .chat-text h4 { font-size: 14px; }
+
+.chat-bubble.assistant .chat-text p {
+    margin: 6px 0;
+}
+.chat-bubble.assistant .chat-text p:first-child {
+    margin-top: 0;
+}
+.chat-bubble.assistant .chat-text p:last-child {
+    margin-bottom: 0;
+}
+
+.chat-bubble.assistant .chat-text ul,
+.chat-bubble.assistant .chat-text ol {
+    margin: 6px 0;
+    padding-left: 20px;
+}
+.chat-bubble.assistant .chat-text li {
+    margin: 3px 0;
+}
+
+.chat-bubble.assistant .chat-text code {
+    background: var(--color-bg-secondary);
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+.chat-bubble.assistant .chat-text pre {
+    background: var(--color-bg-secondary);
+    padding: 10px 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    margin: 8px 0;
+}
+.chat-bubble.assistant .chat-text pre code {
+    background: none;
+    padding: 0;
+}
+
+.chat-bubble.assistant .chat-text blockquote {
+    border-left: 3px solid var(--color-primary);
+    margin: 8px 0;
+    padding: 4px 12px;
+    color: var(--color-text-secondary);
+}
+
+.chat-bubble.assistant .chat-text table {
+    border-collapse: collapse;
+    margin: 8px 0;
+    width: 100%;
+    font-size: 13px;
+}
+.chat-bubble.assistant .chat-text th,
+.chat-bubble.assistant .chat-text td {
+    border: 1px solid var(--color-border);
+    padding: 6px 10px;
+    text-align: left;
+}
+.chat-bubble.assistant .chat-text th {
+    background: var(--color-bg-secondary);
+    font-weight: 600;
+}
+
+.chat-bubble.assistant .chat-text strong {
+    font-weight: 600;
+}
+.chat-bubble.assistant .chat-text hr {
+    border: none;
+    border-top: 1px solid var(--color-border);
+    margin: 12px 0;
 }
 
 /* 流式输出时 AI 气泡边框高亮 */
