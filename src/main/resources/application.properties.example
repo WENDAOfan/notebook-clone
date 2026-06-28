@@ -1,0 +1,39 @@
+# ============================================================
+# Notebook Clone 配置模板
+# 用法: cp application.properties.example application.properties
+# 然后填入你的真实值，或通过环境变量注入（推荐）。
+# 真实 application.properties 已被 .gitignore 忽略，切勿提交。
+# ============================================================
+
+# ---------- 数据库 PostgreSQL ----------
+spring.datasource.url=jdbc:postgresql://localhost:5432/notebook_clone
+spring.datasource.username=postgres
+spring.datasource.password=${DB_PASSWORD:your_password}
+spring.datasource.driver-class-name=org.postgresql.Driver
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.PostgreSQLDialect
+spring.jpa.properties.hibernate.format_sql=true
+
+# ---------- JWT ----------
+jwt.secret=${JWT_SECRET:please-change-this-to-a-random-256-bit-secret}
+jwt.expiration=86400000
+
+# ---------- DeepSeek (Chat, OpenAI 兼容接口) ----------
+spring.ai.openai.base-url=https://api.deepseek.com
+spring.ai.openai.api-key=${DEEPSEEK_API_KEY:sk-your-deepseek-key}
+spring.ai.openai.chat.options.model=deepseek-chat
+spring.ai.openai.chat.options.temperature=0.7
+
+# ---------- 上传限制 ----------
+spring.servlet.multipart.max-file-size=50MB
+spring.servlet.multipart.max-request-size=50MB
+
+# ---------- 智谱 AI (Embedding) ----------
+# 注意: base-url 由 ZhiPuAiApi 默认处理，无需在此指定
+spring.ai.zhipuai.api-key=${ZHIPU_API_KEY:your-zhipu-key}
+spring.ai.zhipuai.embedding.options.model=embedding-3
+
+# ---------- 向量存储 ----------
+# SimpleVectorStore 文件持久化路径（运行时生成，已 git-ignore）
+vector.store.file=vector-store.json
