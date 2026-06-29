@@ -154,7 +154,7 @@
                     <div class="view-header">
                         <button class="btn-back" onclick="backToNotebook()">← 返回</button>
                         <h2 id="docViewTitle" class="view-title"></h2>
-                        <button class="btn btn-danger btn-small" onclick="deleteDocument()">删除</button>
+                        <button class="btn btn-danger btn-small" onclick="deleteDocument(event)">删除</button>
                     </div>
                     <div class="document-view-body">
                         <!-- AI 摘要区域 -->
@@ -334,6 +334,7 @@
         </div>
     </div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.9/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.0/marked.min.js"></script>
     <script src="js/app.js"></script>
 </body>

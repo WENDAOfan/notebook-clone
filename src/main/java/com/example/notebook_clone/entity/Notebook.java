@@ -3,6 +3,8 @@ import java.util.List;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import lombok.Data;  // ← 在文件顶部加这个 import
+import lombok.ToString;
+import lombok.EqualsAndHashCode;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import com.fasterxml.jackson.annotation.JsonProperty;
@@ -11,6 +13,8 @@ import com.fasterxml.jackson.annotation.JsonProperty.Access;
 
 // @Entity 告诉 JPA：这是一个要映射到数据库里的表
 @Data
+@ToString(exclude = {"documents", "user"})
+@EqualsAndHashCode(exclude = {"documents", "user"})
 @Entity
 public class Notebook {
 

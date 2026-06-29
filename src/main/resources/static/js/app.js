@@ -19,11 +19,17 @@ document.addEventListener('DOMContentLoaded', () => {
 function checkLoginStatus() {
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('currentUser');
-    
+
     if (savedToken && savedUser) {
-        authToken = savedToken;
-        currentUser = JSON.parse(savedUser);
-        showMainApp();
+        try {
+            authToken = savedToken;
+            currentUser = JSON.parse(savedUser);
+            showMainApp();
+        } catch (e) {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('currentUser');
+            showAuthPage();
+        }
     } else {
         showAuthPage();
     }
@@ -274,7 +280,7 @@ async function uploadDocumentFileAPI(file, notebookId, additionalContent) {
         if (response.status === 401) {
             showToast('登录已过期，请重新登录', 'error');
             logout();
-            return;
+            throw new Error('登录已过期');
         }
         throw new Error(`HTTP error! status: ${response.status}`);
     }
@@ -328,7 +334,7 @@ async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
     let receivedData = false;
 
     function processBuffer() {
-        const blocks = buffer.split('\n\n');
+        const blocks = buffer.split(/\r?\n\r?\n/);
         buffer = blocks.pop();
 
         for (const block of blocks) {
@@ -337,10 +343,11 @@ async function fetchStream(url, params, onChunk, onTokenUsage, onError) {
             let data = '';
 
             for (const line of lines) {
-                if (line.startsWith('event:')) {
-                    eventName = line.slice(6).trim();
-                } else if (line.startsWith('data:')) {
-                    data += line.slice(5).trim();
+                const trimmedLine = line.replace(/\r$/, '');
+                if (trimmedLine.startsWith('event:')) {
+                    eventName = trimmedLine.slice(6).trim();
+                } else if (trimmedLine.startsWith('data:')) {
+                    data += trimmedLine.slice(5);
                 }
             }
 
@@ -953,7 +960,7 @@ function renderChatHistory(history, container, defaultTitle) {
         } else {
             const ai = appendAiBubble(container);
             const { answer, citations } = parseCitations(msg.content, defaultTitle);
-            ai.textEl.innerHTML = marked.parse(answer);
+            ai.textEl.innerHTML = DOMPurify.sanitize(marked.parse(answer));
             if (citations.length > 0) {
                 renderCitationCards(citations, ai.citationEl);
             }
@@ -1095,7 +1102,7 @@ async function askDocument() {
         // 解析引用并替换文本
         const currentDocTitle = document.getElementById('docViewTitle').textContent;
         const { answer, citations } = parseCitations(ai.rawText, currentDocTitle);
-        ai.textEl.innerHTML = marked.parse(answer);
+        ai.textEl.innerHTML = DOMPurify.sanitize(marked.parse(answer));
 
         if (citations.length > 0) {
             renderCitationCards(citations, ai.citationEl);
@@ -1180,7 +1187,7 @@ async function askNotebook() {
         ai.textEl.classList.remove('streaming');
 
         const { answer, citations } = parseCitations(ai.rawText);
-        ai.textEl.innerHTML = marked.parse(answer);
+        ai.textEl.innerHTML = DOMPurify.sanitize(marked.parse(answer));
 
         if (citations.length > 0) {
             renderCitationCards(citations, ai.citationEl);

@@ -8,9 +8,13 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonProperty.Access;
 
 import lombok.Data;
+import lombok.ToString;
+import lombok.EqualsAndHashCode;
 import jakarta.validation.constraints.NotBlank;
 
 @Data
+@ToString(exclude = {"notebook", "user"})
+@EqualsAndHashCode(exclude = {"notebook", "user"})
 @Entity
 public class Document {
 

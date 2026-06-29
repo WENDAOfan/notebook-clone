@@ -58,7 +58,8 @@ public class NotebookController {
     // 接口 2：创建一个新笔记本 (POST 请求)
     @PostMapping
     public Result<Notebook> createNotebook(@Valid @RequestBody Notebook notebook) {
-        
+        notebook.setId(null);  // 防止客户端传 id 覆盖已有笔记本（Mass Assignment 防护）
+
         // ===== Day 15：自动关联当前登录用户 =====
         // 1. 从 SecurityContext 获取当前登录用户名
         String username = SecurityContextHolder.getContext()//获取 Security 上下文

@@ -32,17 +32,21 @@ public class AsyncSummaryService {
         try {
             // 1. 查文档
             Document document = documentRepository.findById(documentId).orElse(null);
-            if (document == null || document.getContent() == null || document.getContent().isEmpty()) {
-                log.warn("[异步摘要] 文档 {} 不存在或内容为空，跳过", documentId);
+            if (document == null) {
+                log.warn("[异步摘要] 文档 {} 不存在，跳过", documentId);
+                return;
+            }
+            if (document.getContent() == null || document.getContent().isEmpty()) {
+                log.warn("[异步摘要] 文档 {} 内容为空，跳过摘要生成", documentId);
+                documentRepository.updateSummary(documentId, "文档内容为空，无需摘要");
                 return;
             }
 
             // 2. 调 AI 生成摘要（复用已有的 AiSummaryService）
             String summary = aiSummaryService.generateSummary(document.getContent());
 
-            // 3. 保存摘要
-            document.setSummary(summary);
-            documentRepository.save(document);
+            // 3. 保存摘要（定向更新，避免与分块任务的 save 互相覆盖字段）
+            documentRepository.updateSummary(documentId, summary);
 
             log.info("[异步摘要] 文档 {} 摘要生成成功", documentId);
 
@@ -50,11 +54,7 @@ public class AsyncSummaryService {
             log.error("[异步摘要] 文档 {} 摘要生成失败: {}", documentId, e.getMessage(), e);
             // 失败时更新 summary 字段，避免前端永远显示"摘要生成中..."
             try {
-                Document document = documentRepository.findById(documentId).orElse(null);
-                if (document != null) {
-                    document.setSummary("摘要生成失败，请点击重新生成");
-                    documentRepository.save(document);
-                }
+                documentRepository.updateSummary(documentId, "摘要生成失败，请点击重新生成");
             } catch (Exception saveErr) {
                 log.error("[异步摘要] 更新失败状态也出错了: {}", saveErr.getMessage());
             }

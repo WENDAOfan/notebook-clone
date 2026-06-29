@@ -1,11 +1,17 @@
 package com.example.notebook_clone.entity;
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.ToString;
+import lombok.EqualsAndHashCode;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonProperty.Access;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 // @Entity 告诉 JPA：这是一个要映射到数据库的表
 @Data
+@ToString(exclude = {"notebooks"})
+@EqualsAndHashCode(exclude = {"notebooks"})
 @Entity
 @Table(name = "users")  // 明确指定表名为 users（默认会是 user）
 // 如果不写，JPA 默认用类名小写 → 表名会是 "user"
@@ -21,6 +27,7 @@ public class User {
     private String username;
      // 密码字段（Day 12 会用 BCrypt 加密存储）
     @Column(nullable = false)
+    @JsonProperty(access = Access.WRITE_ONLY)
     private String password;
     // 邮箱是可选的，不加约束
     private String email;

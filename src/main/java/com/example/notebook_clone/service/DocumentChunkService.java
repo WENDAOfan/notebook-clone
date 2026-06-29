@@ -103,9 +103,8 @@ public class DocumentChunkService {
                 log.info("[向量存储] 已保存到文件: {}", file.getAbsolutePath());
             }
 
-            // 5. 更新文档的分块数量
-            document.setChunkCount(enrichedChunks.size());
-            documentRepository.save(document);
+            // 5. 更新文档的分块数量（定向更新，避免与摘要任务的 save 互相覆盖字段）
+            documentRepository.updateChunkCount(documentId, enrichedChunks.size());
 
             log.info("[分块] 完成 | 文档: {} | 共 {} 块", document.getTitle(), enrichedChunks.size());
 

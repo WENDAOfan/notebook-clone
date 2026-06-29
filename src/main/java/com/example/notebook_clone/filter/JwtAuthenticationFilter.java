@@ -28,6 +28,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         this.jwtUtil = jwtUtil;
     }
 
+    // 放行 /api/auth/** 路径：避免携带过期 Token 请求登录时被拦截，导致无法重新登录
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        String path = request.getRequestURI();
+        return path.startsWith("/api/auth/");
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,//前端发来的请求
                                     HttpServletResponse response,//要返回给前端的响应

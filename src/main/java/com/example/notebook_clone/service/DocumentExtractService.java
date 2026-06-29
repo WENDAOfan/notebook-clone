@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;//表示这个类是一个服务�
 import org.springframework.web.multipart.MultipartFile;//代表用户上传的文件
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
@@ -121,7 +122,8 @@ public class DocumentExtractService {
     private String extractFromDocx(MultipartFile file) throws IOException {
         StringBuilder text = new StringBuilder();//用来保存提取出来的文字
         //拿到上传文件的输入流，交给 POI 去解析
-        try (XWPFDocument document = new XWPFDocument(file.getInputStream())) {
+        try (InputStream is = file.getInputStream();
+             XWPFDocument document = new XWPFDocument(is)) {
             //从 Word 文档里取出所有段落的列表
             List<XWPFParagraph> paragraphs = document.getParagraphs();
             for (XWPFParagraph paragraph : paragraphs) {

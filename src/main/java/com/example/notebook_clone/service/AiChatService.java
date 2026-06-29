@@ -7,6 +7,9 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.Filter;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import com.example.notebook_clone.repository.DocumentRepository;
 import org.springframework.http.codec.ServerSentEvent;
 import org.springframework.retry.annotation.Backoff;//@Retryable 的退避参数（等多久、间隔倍数）
 import org.springframework.retry.annotation.Recover;//标记兜底方法——重试全部失败后自动调用
@@ -28,14 +31,17 @@ public class AiChatService {
     private final VectorStore vectorStore;
     private final ChatHistoryService chatHistoryService;  // Day 30 新增：对话历史
     private final ContextCompressionService compressionService;  // Day 30.5 新增：上下文压缩
+    private final DocumentRepository documentRepository;  // Day 32：RAG 过滤需要查文档 ID
 
     public AiChatService(ChatClient.Builder chatClientBuilder, VectorStore vectorStore,
                          ChatHistoryService chatHistoryService,
-                         ContextCompressionService compressionService) {
+                         ContextCompressionService compressionService,
+                         DocumentRepository documentRepository) {
         this.chatClient = chatClientBuilder.build();
         this.vectorStore = vectorStore;
         this.chatHistoryService = chatHistoryService;
         this.compressionService = compressionService;
+        this.documentRepository = documentRepository;
     }
 
     /**
@@ -45,12 +51,14 @@ public class AiChatService {
      * @param topK     返回最相关的块数量
      * @return 带来源标注的文档块列表
      */
-    private List<String> retrieveRelevantChunks(String question, int topK) {
-        List<Document> results = vectorStore.similaritySearch(
-                SearchRequest.builder()
-                        .query(question)
-                        .topK(topK)
-                        .build());
+    private List<String> retrieveRelevantChunks(String question, int topK, Filter.Expression filter) {
+        SearchRequest.Builder builder = SearchRequest.builder()
+                .query(question)
+                .topK(topK);
+        if (filter != null) {
+            builder.filterExpression(filter);
+        }
+        List<Document> results = vectorStore.similaritySearch(builder.build());
 
         List<String> chunksWithSource = new java.util.ArrayList<>();
         for (int i = 0; i < results.size(); i++) {
@@ -96,7 +104,8 @@ public class AiChatService {
         // ================================
 
         // ===== Day 29：RAG 检索替代全文塞入 =====
-        List<String> relevantChunks = retrieveRelevantChunks(question, 5);
+        Filter.Expression docFilter = new FilterExpressionBuilder().eq("documentId", documentId).build();
+        List<String> relevantChunks = retrieveRelevantChunks(question, 5, docFilter);
 
         String context;
         if (relevantChunks.isEmpty()) {
@@ -178,7 +187,12 @@ public class AiChatService {
         // ================================
 
         // ===== Day 29：用 RAG 替代"拼接所有文档" =====
-        List<String> relevantChunks = retrieveRelevantChunks(question, 8);
+        List<Long> docIds = documentRepository.findIdsByNotebookId(notebookId);
+        Filter.Expression notebookFilter = null;
+        if (docIds != null && !docIds.isEmpty()) {
+            notebookFilter = new FilterExpressionBuilder().in("documentId", docIds.toArray()).build();
+        }
+        List<String> relevantChunks = retrieveRelevantChunks(question, 8, notebookFilter);
 
         String context;
         if (relevantChunks.isEmpty()) {
@@ -342,7 +356,8 @@ public class AiChatService {
         // ================================
 
         // ===== Day 29：RAG 检索替代全文塞入（流式）=====
-        List<String> relevantChunks = retrieveRelevantChunks(question, 5);
+        Filter.Expression docFilter = new FilterExpressionBuilder().eq("documentId", documentId).build();
+        List<String> relevantChunks = retrieveRelevantChunks(question, 5, docFilter);
 
         String context;
         if (relevantChunks.isEmpty()) {
@@ -443,7 +458,12 @@ public class AiChatService {
         // ================================
 
         // ===== Day 29：用 RAG 替代"拼接所有文档"（流式）=====
-        List<String> relevantChunks = retrieveRelevantChunks(question, 8);
+        List<Long> docIds = documentRepository.findIdsByNotebookId(notebookId);
+        Filter.Expression notebookFilter = null;
+        if (docIds != null && !docIds.isEmpty()) {
+            notebookFilter = new FilterExpressionBuilder().in("documentId", docIds.toArray()).build();
+        }
+        List<String> relevantChunks = retrieveRelevantChunks(question, 8, notebookFilter);
 
         String context;
         if (relevantChunks.isEmpty()) {

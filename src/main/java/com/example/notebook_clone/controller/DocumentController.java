@@ -63,6 +63,7 @@ public class DocumentController {
     // 接口 1：往笔记本里添加一份新文档 (POST 请求)
 @PostMapping
 public Result<Document> createDocument(@Valid @RequestBody Document document, @RequestParam Long notebookId) {
+    document.setId(null);  // 防止客户端传 id 覆盖已有文档（Mass Assignment 防护）
     // ===== Day 15：自动关联当前登录用户 =====
     // 1. 从 SecurityContext 获取当前登录用户名
     String username = SecurityContextHolder.getContext()

@@ -11,8 +11,9 @@ import java.util.List;
 
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
 
-    /** 按会话 ID 查询历史，按时间升序 */
-    List<ChatMessage> findBySessionIdOrderByCreateTimeAsc(String sessionId);
+    /** 按会话 ID 查询历史，按时间升序；同时间按 id 升序保证 user/assistant 顺序稳定 */
+    @Query("SELECT c FROM ChatMessage c WHERE c.sessionId = :sid ORDER BY c.createTime ASC, c.id ASC")
+    List<ChatMessage> findBySessionIdOrderByCreateTimeAsc(@Param("sid") String sessionId);
 
     /** 统计某个会话的消息数 */
     long countBySessionId(String sessionId);
