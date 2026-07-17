@@ -82,7 +82,7 @@ src/main/java/com/example/notebook_clone/
 ├── common/        Result<T>, GlobalExceptionHandler
 ├── config/        AsyncConfig, SecurityConfig, VectorStoreConfig
 ├── controller/    Auth, Notebook, Document, TestAi, ChunkTest, Test, User, Hello
-├── dto/           AskRequest, ChatRequest
+├── dto/           AskRequest
 ├── entity/        User, Notebook, Document, ChatMessage
 ├── filter/        JwtAuthenticationFilter
 ├── repository/    4 个 JpaRepository
@@ -100,10 +100,10 @@ src/main/resources/
 ### 📖 API 文档
 
 <details>
-<summary>点击展开完整 API（33 个端点）</summary>
+<summary>点击展开核心业务 API</summary>
 
 **统一响应**：`{ "code": int, "message": String, "data": T }`，成功 `code=200`。
-**认证**：除 `/api/auth/**` 和 `/test/**` 外，所有接口需在请求头携带 `Authorization: Bearer <token>`。
+**认证**：除注册、登录接口外，业务接口均需在请求头携带 `Authorization: Bearer <token>`。
 
 **认证 Auth**
 
@@ -140,16 +140,6 @@ src/main/resources/
 | GET | `/api/documents/{id}/ask/stream` | 单文档流式问答（SSE） |
 | GET | `/api/documents/{id}/chat/history` | 查询对话历史 |
 | DELETE | `/api/documents/{id}/chat/history` | 清空对话历史 |
-
-**测试 Test**（`/test/**` 无需认证，正式上线可移除）
-
-| 方法 | 路径 | 功能 |
-| :--- | :--- | :--- |
-| GET | `/test/ai` | 固定问题测 AI |
-| POST | `/test/ai` | 自定义 question + system prompt |
-| GET | `/test/ai/stream` | 流式测试 |
-| GET | `/test/chunk/{documentId}` | 手动触发分块向量化 |
-| GET | `/test/chunk/search?query=&topK=3` | 向量相似度搜索 |
 
 </details>
 
@@ -216,7 +206,7 @@ Java 21 + Spring Boot under `src/main/java/com/example/notebook_clone` (packages
 
 ### 📖 API Reference
 
-33 endpoints across Auth / Notebook / Document / Test groups. Unified response `{code, message, data}` (success `code=200`). All endpoints require `Authorization: Bearer <token>` except `/api/auth/**` and `/test/**`. See the Chinese section above for the full table, or explore `src/main/java/.../controller`.
+Core business endpoints cover Auth, Notebook, and Document operations. Responses use `{code, message, data}` (success `code=200`). Business endpoints require `Authorization: Bearer <token>` except registration and login. See the Chinese section above for the full table, or explore `src/main/java/.../controller`.
 
 ### 🗺 Roadmap
 

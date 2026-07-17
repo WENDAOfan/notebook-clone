@@ -56,6 +56,8 @@ public class DocumentChunkService {
      */
     @Async("aiTaskExecutor")
     public void chunkAndStoreAsync(Long documentId) {
+        // 提前保存本次计划写入的 ID，异常时可补偿清理部分成功的向量。
+        List<String> chunkIds = List.of();
         try {
             log.info("[分块] 开始处理文档 ID: {}", documentId);
 
@@ -92,6 +94,9 @@ public class DocumentChunkService {
                                 chunkId, chunk.getText(), metadata);
                     })
                     .collect(Collectors.toList());
+            chunkIds = enrichedChunks.stream()
+                    .map(org.springframework.ai.document.Document::getId)
+                    .toList();
 
             // 4. 存入向量存储（内部自动调 Embedding API 生成向量）
             vectorStore.add(enrichedChunks);
@@ -110,6 +115,24 @@ public class DocumentChunkService {
 
         } catch (Exception e) {
             log.error("[分块] 处理失败 | 文档 ID: {} | 错误: {}", documentId, e.getMessage(), e);
+
+            // VectorStore.add 可能在部分写入后才抛异常，按本次块 ID 做补偿删除。
+            if (!chunkIds.isEmpty()) {
+                try {
+                    vectorStore.delete(chunkIds);
+                } catch (Exception cleanupError) {
+                    log.error("[分块] 失败后的向量补偿清理也失败 | 文档 ID: {} | 错误: {}",
+                            documentId, cleanupError.getMessage(), cleanupError);
+                }
+            }
+
+            // -1 表示索引失败；原文仍然保留，后续可以重新索引。
+            try {
+                documentRepository.updateChunkCount(documentId, -1);
+            } catch (Exception statusError) {
+                log.error("[分块] 写入索引失败状态也失败 | 文档 ID: {} | 错误: {}",
+                        documentId, statusError.getMessage(), statusError);
+            }
         }
     }
 
@@ -129,7 +152,7 @@ public class DocumentChunkService {
             }
 
             Integer chunkCount = document.getChunkCount();
-            if (chunkCount == null || chunkCount == 0) {
+            if (chunkCount == null || chunkCount <= 0) {
                 log.info("[向量清理] 文档没有分块记录，跳过 | ID: {}", documentId);
                 return;
             }

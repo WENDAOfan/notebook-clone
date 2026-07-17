@@ -3,6 +3,7 @@ package com.example.notebook_clone.config;
 import com.example.notebook_clone.filter.JwtAuthenticationFilter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -37,14 +38,23 @@ public class SecurityConfig {
             .sessionManagement(session -> 
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
+
+            // API 未认证时统一返回 401 JSON，而不是跳转登录页或返回 403
+            .exceptionHandling(exceptions -> exceptions
+                .authenticationEntryPoint((request, response, exception) -> {
+                    response.setStatus(401);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write(
+                            "{\"code\":401,\"message\":\"未登录或登录已过期\",\"data\":null}");
+                })
+            )
             
             // 配置授权规则
             .authorizeHttpRequests(auth -> auth
                 // 放行静态资源（前端页面）
                 .requestMatchers("/", "/index.html", "/css/**", "/js/**").permitAll()
                 // 放行注册和登录接口（无需认证）
-                .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/test/**").permitAll()
+                .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                 // 其他所有请求都需要认证
                 .anyRequest().authenticated()
             )

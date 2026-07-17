@@ -110,19 +110,20 @@ public Result<Document> createDocument(@Valid @RequestBody Document document, @R
     ) {
         try {
             String fileName = file.getOriginalFilename();
-
-            String extractedText = extractService.extractText(file);
-
-            // Day 27：合并用户手动输入 + 文件提取文本
-            String finalContent = mergeContent(extractedText, additionalContent);
-
-            Document document = new Document();
             String username = SecurityContextHolder.getContext()
                     .getAuthentication().getName();
             User currentUser = userRepository.findByUsername(username)
                     .orElseThrow(() -> new RuntimeException("用户不存在: " + username));
             Notebook notebook = notebookRepository.findByIdAndUserId(notebookId, currentUser.getId())
                 .orElseThrow(() -> new RuntimeException("笔记本不存在或无权操作"));
+
+            // 先完成身份和归属校验，再执行可能耗时的文件解析
+            String extractedText = extractService.extractText(file);
+
+            // Day 27：合并用户手动输入 + 文件提取文本
+            String finalContent = mergeContent(extractedText, additionalContent);
+
+            Document document = new Document();
             
             document.setNotebook(notebook);
             document.setUser(currentUser);

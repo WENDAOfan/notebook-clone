@@ -22,6 +22,7 @@ import com.example.notebook_clone.entity.Document;
 import com.example.notebook_clone.repository.DocumentRepository;
 import com.example.notebook_clone.service.AiChatService;
 import com.example.notebook_clone.service.ChatHistoryService;  // Day 30 新增
+import com.example.notebook_clone.service.DocumentChunkService;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.ServerSentEvent;
 
@@ -35,12 +36,14 @@ public class NotebookController {
     private final DocumentRepository documentRepository;
     private final AiChatService aiChatService;
     private final ChatHistoryService chatHistoryService;  // Day 30 新增
-    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository,DocumentRepository documentRepository,AiChatService aiChatService,ChatHistoryService chatHistoryService) {
+    private final DocumentChunkService documentChunkService;
+    public NotebookController(NotebookRepository notebookRepository,UserRepository userRepository,DocumentRepository documentRepository,AiChatService aiChatService,ChatHistoryService chatHistoryService,DocumentChunkService documentChunkService) {
         this.notebookRepository = notebookRepository;
         this.userRepository = userRepository;
         this.documentRepository = documentRepository; 
         this.aiChatService = aiChatService;
         this.chatHistoryService = chatHistoryService;  // Day 30 新增
+        this.documentChunkService = documentChunkService;
     }
 
     // 接口 1：查看所有笔记本 (GET 请求)
@@ -114,8 +117,12 @@ public class NotebookController {
         if (!exists) {
         throw new RuntimeException("笔记本不存在或无权删除");
             }
-        // 3. 校验通过，删除
-        // Day 30：清空该笔记本的对话历史
+        // 3. 向量库不会随数据库级联删除，所以必须先逐篇清理文档向量
+        List<Long> documentIds = documentRepository.findIdsByNotebookId(id);
+        for (Long documentId : documentIds) {
+            documentChunkService.deleteDocumentChunks(documentId);
+        }
+        // 4. 清空该笔记本的对话历史，再删除数据库记录
         chatHistoryService.clearNotebookHistory(id, currentUser.getId());
         notebookRepository.deleteById(id);
         return Result.success(null);

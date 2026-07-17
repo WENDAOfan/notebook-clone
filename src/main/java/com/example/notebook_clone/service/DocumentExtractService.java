@@ -22,7 +22,7 @@ public class DocumentExtractService {
      */
     public String extractText(MultipartFile file) throws IOException {
         String fileName = file.getOriginalFilename();
-        if (fileName == null) {
+        if (fileName == null || fileName.isBlank()) {
             throw new IllegalArgumentException("文件名不能为空");
         }
 
