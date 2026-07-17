@@ -1,0 +1,41 @@
+{
+  "name": "notebook-electron",
+  "version": "1.0.0",
+  "description": "NotebookLM Clone - Local Electron & SQLite3 Desktop Application",
+  "main": "main.js",
+  "scripts": {
+    "test": "node --test --test-concurrency=1",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.notebook.clone",
+    "productName": "NotebookClone",
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "files": [
+      "**/*",
+      "!dist/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@llamaindex/liteparse/**/*"
+    ]
+  },
+  "dependencies": {
+    "@llamaindex/liteparse": "^2.5.1",
+    "js-tiktoken": "^1.0.10",
+    "mammoth": "^1.7.0",
+    "openai": "^4.28.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "electron": "^28.2.0",
+    "electron-builder": "^26.15.3"
+  }
+}

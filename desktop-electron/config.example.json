@@ -1,0 +1,12 @@
+{
+  "deepseek": {
+    "apiKey": "YOUR_DEEPSEEK_API_KEY",
+    "baseURL": "https://api.deepseek.com",
+    "model": "deepseek-chat"
+  },
+  "zhipu": {
+    "apiKey": "YOUR_ZHIPU_API_KEY",
+    "baseURL": "https://open.bigmodel.cn/api/paas/v4/",
+    "model": "embedding-3"
+  }
+}
