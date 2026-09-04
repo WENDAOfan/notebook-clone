@@ -1,0 +1,18 @@
+[
+  {"id":"exact-model","query":"极光X1保修多久","embedding":[0,0,0,0],"expectedTitles":["极光X1产品手册"]},
+  {"id":"semantic-warranty","query":"设备坏了以后厂家负责几年","embedding":[1,0,0,0],"expectedTitles":["极光X1产品手册"]},
+  {"id":"exact-charge","query":"磷酸铁锂充电温度","embedding":[0,0,0,0],"expectedTitles":["电池安全指南"]},
+  {"id":"semantic-battery","query":"低温环境能否给电池补能","embedding":[0,1,0,0],"expectedTitles":["电池安全指南"]},
+  {"id":"exact-2fa","query":"双重验证恢复码","embedding":[0,0,0,0],"expectedTitles":["账户安全规范"]},
+  {"id":"semantic-account","query":"手机丢失后怎样重新登录","embedding":[0,0,1,0],"expectedTitles":["账户安全规范"]},
+  {"id":"exact-return","query":"七天无理由退货","embedding":[0,0,0,0],"expectedTitles":["星桥售后政策"]},
+  {"id":"semantic-return","query":"不喜欢商品可以几天内寄回","embedding":[0,0,0,1],"expectedTitles":["星桥售后政策"]},
+  {"id":"multi-product","query":"比较保修与电池使用注意事项","embedding":[0.7,0.7,0,0],"expectedTitles":["极光X1产品手册","电池安全指南"]},
+  {"id":"multi-service","query":"账户异常和退货分别怎么办","embedding":[0,0,0.7,0.7],"expectedTitles":["账户安全规范","星桥售后政策"]},
+  {"id":"followup-this","query":"这个期限是多少","history":[{"role":"user","content":"极光X1的整机保修政策是什么"}],"embedding":[1,0,0,0],"expectedTitles":["极光X1产品手册"]},
+  {"id":"followup-it","query":"它在零度以下呢","history":[{"role":"user","content":"电池允许在哪些温度充电"}],"embedding":[0,1,0,0],"expectedTitles":["电池安全指南"]},
+  {"id":"rare-term","query":"离线恢复码保管","embedding":[0,0,0,0],"expectedTitles":["账户安全规范"]},
+  {"id":"refund-time","query":"退款原路返回需要几个工作日","embedding":[0,0,0,0],"expectedTitles":["星桥售后政策"]},
+  {"id":"no-answer","query":"火星基地的氧气浓度","embedding":[0,0,0,0],"expectedTitles":[]},
+  {"id":"unknown-course","query":"量子场论课程考试时间","embedding":[0,0,0,0],"expectedTitles":[]}
+]

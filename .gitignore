@@ -1,2 +1,41 @@
-notebook-clone/
+# 子项目已经并入本仓库，保留源码，但忽略各自的本地运行/构建数据。
+.agents/
+
+# Web 仓库中旧的 Electron 副本；最新版统一使用根目录下的 notebook-electron/。
+notebook-clone/desktop-electron/
+
+notebook-electron/node_modules/
+notebook-electron/dist/
+notebook-electron/config.json
+notebook-electron/config.local.json
+notebook-electron/config.*.local.json
+notebook-electron/.env
+notebook-electron/.env.*
+!notebook-electron/.env.example
+notebook-electron/*.db
+notebook-electron/*.db-*
+notebook-electron/*.sqlite*
+notebook-electron/vector-store.json
+notebook-electron/.local-data/
+notebook-electron/coverage/
+notebook-electron/test-results/
+
+notebook-clone/target/
+notebook-clone/.mvn/wrapper/maven-wrapper.jar
+notebook-clone/.idea/
+notebook-clone/*.iml
+notebook-clone/.vscode/
+notebook-clone/src/main/resources/application.properties
+notebook-clone/api.http
+notebook-clone/*.env
+notebook-clone/.env
+notebook-clone/vector-store.json
+notebook-clone/logs/
+
+# 临时保存的子仓库元数据，不属于最终源码。
+.git-nested-backups/
+
 vector-store.json
+
+# 本地简历/项目记录文档，不纳入源码仓库。
+RAG知识库项目经历_简历优化稿.docx

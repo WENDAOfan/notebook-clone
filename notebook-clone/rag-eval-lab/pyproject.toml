@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rag-eval-lab"
+version = "0.1.0"
+description = "Notebook Clone 的可重复 RAG 自动化评测 MVP"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8.0,<9.0"]
+online = ["deepeval>=4.0,<5.0"]
+
+[project.scripts]
+rag-eval = "rag_eval_lab.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra -m 'not online'"
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+  "online: 需要显式开关，可能访问 Spring 服务或调用付费 LLM Judge",
+]

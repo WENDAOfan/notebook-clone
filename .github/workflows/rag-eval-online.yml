@@ -1,0 +1,58 @@
+name: Manual Online RAG Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_cases:
+        description: "Maximum paid online cases"
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  online-eval:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: notebook-clone/rag-eval-lab
+    env:
+      RAG_EVAL_ONLINE_ENABLED: "true"
+      RAG_EVAL_BASE_URL: ${{ secrets.RAG_EVAL_BASE_URL }}
+      RAG_EVAL_JWT: ${{ secrets.RAG_EVAL_JWT }}
+      RAG_EVAL_OTHER_USER_JWT: ${{ secrets.RAG_EVAL_OTHER_USER_JWT }}
+      RAG_EVAL_TARGET_TYPE: ${{ secrets.RAG_EVAL_TARGET_TYPE }}
+      RAG_EVAL_TARGET_ID: ${{ secrets.RAG_EVAL_TARGET_ID }}
+      RAG_EVAL_DEEPEVAL_ENABLED: ${{ secrets.RAG_EVAL_DEEPEVAL_ENABLED }}
+      RAG_EVAL_JUDGE_MODEL: ${{ secrets.RAG_EVAL_JUDGE_MODEL }}
+      RAG_EVAL_JUDGE_API_KEY: ${{ secrets.RAG_EVAL_JUDGE_API_KEY }}
+      RAG_EVAL_JUDGE_BASE_URL: ${{ secrets.RAG_EVAL_JUDGE_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Spring and Python repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/notebook-clone
+          path: notebook-clone
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: notebook-clone/rag-eval-lab/pyproject.toml
+      - run: python -m pip install -e ".[test,online]"
+      - name: Explain missing staging configuration
+        if: ${{ env.RAG_EVAL_BASE_URL == '' || env.RAG_EVAL_JWT == '' || env.RAG_EVAL_TARGET_TYPE == '' || env.RAG_EVAL_TARGET_ID == '' }}
+        run: echo "Online evaluation skipped because staging Secrets are incomplete."
+      - name: Run deterministic online checks
+        if: ${{ env.RAG_EVAL_BASE_URL != '' && env.RAG_EVAL_JWT != '' && env.RAG_EVAL_TARGET_TYPE != '' && env.RAG_EVAL_TARGET_ID != '' }}
+        run: python -m pytest -m online
+      - name: Generate downloadable report
+        if: ${{ env.RAG_EVAL_BASE_URL != '' && env.RAG_EVAL_JWT != '' && env.RAG_EVAL_TARGET_TYPE != '' && env.RAG_EVAL_TARGET_ID != '' }}
+        run: python -m rag_eval_lab.cli --mode online --max-cases ${{ inputs.max_cases }}
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: rag-eval-online-report
+          path: notebook-clone/rag-eval-lab/reports/
+          if-no-files-found: ignore
