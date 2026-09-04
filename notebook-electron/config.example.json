@@ -1,0 +1,18 @@
+{
+  "deepseek": {
+    "apiKey": "YOUR_DEEPSEEK_API_KEY",
+    "baseURL": "https://api.deepseek.com",
+    "model": "deepseek-chat"
+  },
+  "zhipu": {
+    "apiKey": "YOUR_ZHIPU_API_KEY",
+    "baseURL": "https://open.bigmodel.cn/api/paas/v4/",
+    "model": "embedding-3"
+  },
+  "llamaParse": {
+    "apiKey": "YOUR_LLAMAPARSE_API_KEY",
+    "baseURL": "https://api.cloud.llamaindex.ai/api/parsing",
+    "language": "ch_sim",
+    "resultType": "markdown"
+  }
+}
