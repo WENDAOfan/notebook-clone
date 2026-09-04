@@ -1,0 +1,64 @@
+name: Offline CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  spring-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: notebook-clone
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Spring and Python repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/notebook-clone
+          path: notebook-clone
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: chmod +x mvnw
+      - run: ./mvnw --batch-mode test
+
+  electron-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: notebook-electron
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: notebook-electron/package-lock.json
+      - run: npm ci
+      - run: npm test
+
+  python-offline-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: notebook-clone/rag-eval-lab
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out Spring and Python repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/notebook-clone
+          path: notebook-clone
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: notebook-clone/rag-eval-lab/pyproject.toml
+      - run: python -m pip install -e ".[test]"
+      - run: python -m pytest
