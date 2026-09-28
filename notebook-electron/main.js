@@ -12,6 +12,7 @@ if (typeof dns.setDefaultResultOrder === 'function') {
 const db = require('./database');
 const vectorStore = require('./vector-store');
 const ragService = require('./rag-service');
+const { invalidateCorruptIndexes } = require('./embedding-client');
 const extractor = require('./extractor');
 const configService = require('./config-service');
 const agentService = require('./agent-service');
@@ -64,6 +65,8 @@ app.whenReady().then(async () => {
       validDocumentIds.push(...documents.map(document => document.id));
     }
     await vectorStore.cleanupOrphans(validDocumentIds);
+    // Keep old files, but never present corrupt embeddings as a ready index.
+    await invalidateCorruptIndexes(vectorStore.store, id => db.markDocumentIndexStale(id));
   } catch (e) {
     console.error("初始化本地存储系统失败:", e);
   }

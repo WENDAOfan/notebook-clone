@@ -1,0 +1,474 @@
+[
+  {
+    "id": "fact-1",
+    "category": "fact",
+    "split": "calibration",
+    "query": "星桥X1整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X1整机保修期为12个月，核心部件保修期为24个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-1",
+    "category": "semantic",
+    "split": "calibration",
+    "query": "购买星桥X1后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X1整机保修期为12个月，核心部件保修期为24个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-1",
+    "category": "followup",
+    "split": "calibration",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X1的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X1整机保修期为12个月，核心部件保修期为24个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-1",
+    "category": "multi",
+    "split": "calibration",
+    "query": "比较星桥X1和星桥X2的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X1整机保修期为12个月，核心部件保修期为24个月。",
+      "星桥X2整机保修期为18个月，核心部件保修期为30个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-1",
+    "category": "no_answer",
+    "split": "calibration",
+    "query": "星桥X1的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-2",
+    "category": "fact",
+    "split": "calibration",
+    "query": "星桥X2整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X2整机保修期为18个月，核心部件保修期为30个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-2",
+    "category": "semantic",
+    "split": "calibration",
+    "query": "购买星桥X2后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X2整机保修期为18个月，核心部件保修期为30个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-2",
+    "category": "followup",
+    "split": "calibration",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X2的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X2整机保修期为18个月，核心部件保修期为30个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-2",
+    "category": "multi",
+    "split": "calibration",
+    "query": "比较星桥X2和星桥X3的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X2整机保修期为18个月，核心部件保修期为30个月。",
+      "星桥X3整机保修期为24个月，核心部件保修期为36个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-2",
+    "category": "no_answer",
+    "split": "calibration",
+    "query": "星桥X2的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-3",
+    "category": "fact",
+    "split": "calibration",
+    "query": "星桥X3整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X3整机保修期为24个月，核心部件保修期为36个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-3",
+    "category": "semantic",
+    "split": "calibration",
+    "query": "购买星桥X3后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X3整机保修期为24个月，核心部件保修期为36个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-3",
+    "category": "followup",
+    "split": "calibration",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X3的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X3整机保修期为24个月，核心部件保修期为36个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-3",
+    "category": "multi",
+    "split": "calibration",
+    "query": "比较星桥X3和星桥X4的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X3整机保修期为24个月，核心部件保修期为36个月。",
+      "星桥X4整机保修期为30个月，核心部件保修期为42个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-3",
+    "category": "no_answer",
+    "split": "calibration",
+    "query": "星桥X3的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-4",
+    "category": "fact",
+    "split": "calibration",
+    "query": "星桥X4整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X4整机保修期为30个月，核心部件保修期为42个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-4",
+    "category": "semantic",
+    "split": "calibration",
+    "query": "购买星桥X4后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X4整机保修期为30个月，核心部件保修期为42个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-4",
+    "category": "followup",
+    "split": "calibration",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X4的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X4整机保修期为30个月，核心部件保修期为42个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-4",
+    "category": "multi",
+    "split": "calibration",
+    "query": "比较星桥X4和星桥X5的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X4整机保修期为30个月，核心部件保修期为42个月。",
+      "星桥X5整机保修期为36个月，核心部件保修期为48个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-4",
+    "category": "no_answer",
+    "split": "calibration",
+    "query": "星桥X4的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-5",
+    "category": "fact",
+    "split": "acceptance",
+    "query": "星桥X5整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X5整机保修期为36个月，核心部件保修期为48个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-5",
+    "category": "semantic",
+    "split": "acceptance",
+    "query": "购买星桥X5后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X5整机保修期为36个月，核心部件保修期为48个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-5",
+    "category": "followup",
+    "split": "acceptance",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X5的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X5整机保修期为36个月，核心部件保修期为48个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-5",
+    "category": "multi",
+    "split": "acceptance",
+    "query": "比较星桥X5和星桥X6的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X5整机保修期为36个月，核心部件保修期为48个月。",
+      "星桥X6整机保修期为42个月，核心部件保修期为54个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-5",
+    "category": "no_answer",
+    "split": "acceptance",
+    "query": "星桥X5的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-6",
+    "category": "fact",
+    "split": "acceptance",
+    "query": "星桥X6整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X6整机保修期为42个月，核心部件保修期为54个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-6",
+    "category": "semantic",
+    "split": "acceptance",
+    "query": "购买星桥X6后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X6整机保修期为42个月，核心部件保修期为54个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-6",
+    "category": "followup",
+    "split": "acceptance",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X6的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X6整机保修期为42个月，核心部件保修期为54个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-6",
+    "category": "multi",
+    "split": "acceptance",
+    "query": "比较星桥X6和星桥X7的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X6整机保修期为42个月，核心部件保修期为54个月。",
+      "星桥X7整机保修期为48个月，核心部件保修期为60个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-6",
+    "category": "no_answer",
+    "split": "acceptance",
+    "query": "星桥X6的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-7",
+    "category": "fact",
+    "split": "acceptance",
+    "query": "星桥X7整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X7整机保修期为48个月，核心部件保修期为60个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-7",
+    "category": "semantic",
+    "split": "acceptance",
+    "query": "购买星桥X7后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X7整机保修期为48个月，核心部件保修期为60个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-7",
+    "category": "followup",
+    "split": "acceptance",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X7的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X7整机保修期为48个月，核心部件保修期为60个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-7",
+    "category": "multi",
+    "split": "acceptance",
+    "query": "比较星桥X7和星桥X8的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X7整机保修期为48个月，核心部件保修期为60个月。",
+      "星桥X8整机保修期为54个月，核心部件保修期为66个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-7",
+    "category": "no_answer",
+    "split": "acceptance",
+    "query": "星桥X7的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  },
+  {
+    "id": "fact-8",
+    "category": "fact",
+    "split": "acceptance",
+    "query": "星桥X8整机保修期是几个月？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X8整机保修期为54个月，核心部件保修期为66个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "semantic-8",
+    "category": "semantic",
+    "split": "acceptance",
+    "query": "购买星桥X8后，整台机器坏了厂家免费负责多久？",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X8整机保修期为54个月，核心部件保修期为66个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "followup-8",
+    "category": "followup",
+    "split": "acceptance",
+    "query": "它的核心部件呢？",
+    "history": [
+      {
+        "role": "user",
+        "content": "我想了解星桥X8的保修政策"
+      }
+    ],
+    "expectedEvidence": [
+      "星桥X8整机保修期为54个月，核心部件保修期为66个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "multi-8",
+    "category": "multi",
+    "split": "acceptance",
+    "query": "比较星桥X8和星桥X1的整机及核心部件保修期。",
+    "history": [],
+    "expectedEvidence": [
+      "星桥X8整机保修期为54个月，核心部件保修期为66个月。",
+      "星桥X1整机保修期为12个月，核心部件保修期为24个月。"
+    ],
+    "evidenceLocation": "第1节 保修条款"
+  },
+  {
+    "id": "no_answer-8",
+    "category": "no_answer",
+    "split": "acceptance",
+    "query": "星桥X8的内部量子芯片序列号是什么？",
+    "history": [],
+    "expectedEvidence": [],
+    "evidenceLocation": null
+  }
+]

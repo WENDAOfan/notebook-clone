@@ -86,3 +86,22 @@ vector-store.json
 
 # 本地简历/项目记录文档，不纳入源码仓库。
 RAG知识库项目经历_简历优化稿.docx
+/项目仓库地址.txt
+
+# 架构图渲染时产生的视觉检查文件；保留可交互 HTML 源文件供单独决定是否发布。
+/notebook-electron/docs/interview-rag-architecture.visual-check.*
+/notebook-electron/docs/interview-rag-architecture.html
+/notebook-electron/docs/interview-rag-architecture.json
+
+# 桌面 RAG 生成样本及在线评测输出；脚本和固定题目定义随源码保留。
+/notebook-electron/eval/fixtures/
+/notebook-electron/eval/report.json
+/notebook-electron/eval/*-report.json
+/notebook-electron/eval/embedding-fixed-acceptance.json
+/notebook-electron/eval/embedding-verification.json
+/notebook-electron/eval/grounding-before-retrieval-fix.json
+/notebook-electron/eval/calibration-before-prompt-fix.json
+/notebook-electron/eval/review.json
+/notebook-electron/eval/RESULTS.md
+/notebook-electron/eval/GROUNDING-RESULTS.md
+/notebook-electron/eval/EMBEDDING-RESULTS.md

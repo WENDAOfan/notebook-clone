@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "test": "node --test --test-concurrency=1",
+    "eval:online": "node eval/run.js --online",
     "start": "electron .",
     "pack": "electron-builder --dir",
     "dist": "electron-builder"
@@ -23,6 +24,7 @@
       "!dist/**/*",
       "!config.json",
       "!test/**/*",
+      "!eval/**/*",
       "!docs/**/*"
     ],
     "asar": true,
