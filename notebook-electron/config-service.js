@@ -16,7 +16,9 @@ function init({ userDataPath, isPackaged = false }) {
   const userPath = path.join(userDataPath, 'config.json');
   const templatePath = path.join(__dirname, 'config.example.json');
 
-  configPath = isPackaged ? userPath : (fs.existsSync(devPath) ? devPath : userPath);
+  configPath = (isPackaged || fs.existsSync(userPath))
+    ? userPath
+    : (fs.existsSync(devPath) ? devPath : userPath);
   lastError = null;
 
   if (!fs.existsSync(configPath) && fs.existsSync(templatePath)) {

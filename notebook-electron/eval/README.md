@@ -1,5 +1,7 @@
 # 桌面 RAG 真实验收
 
+RGB 中文外部小样本（只测 Electron）：先从 [RGB 官方仓库](https://github.com/chen700564/RGB) 获取固定提交 `65ec39e40e7dc9abb50e9bf1b4f32be3f6f16615`，将其放在源码仓库之外。用 `node eval/rgb-mini.js --rgb-root <RGB目录> --prepare` 离线核对数据哈希、固定的 3 个原题和 6 个对照场景；此步骤不调用模型。实际运行用 `node eval/rgb-mini.js --rgb-root <RGB目录> --online`，默认优先读取工作区 `.local-data/notebook-electron/config.json`；也可用 `--config <桌面版config.json路径>` 显式指定。仅传配置文件路径，绝不要在命令中传密钥。运行会向现有智谱 Embedding、DeepSeek 服务发送 RGB 公开文本并消耗额度，输出本地忽略的 `eval/rgb-mini-report.json`。缺少配置会标记 `BLOCKED`；报告需人工复核，不能当成官方 RGB 分数。协议、许可与选题规则见 [rgb-mini-eval.md](../docs/rgb-mini-eval.md)。
+
 仓库保留 `cases.json` 和 `manifest.json` 作为固定题目定义。`fixtures/` 中的样本文件由 `build-corpus.py` 生成，未纳入 Git。可先用 `python eval/build-corpus.py --verify-definitions` 核对题目，无需额外 Python 包。首次运行文档解析验收前，在 `notebook-electron` 目录安装 `python-docx`、`reportlab`、`Pillow`，再执行 `python eval/build-corpus.py`。UI 冒烟检查会自行创建损坏 PDF。在线运行产生的报告和本地结果记录也不纳入 Git。
 
 事实边界专项：`node eval/grounding-run.js --online`，使用12个新正反例及独立临时库。旧专项报告运行于SDK解码损坏导致的全零向量条件下，不视为向量检索验收。详见 `GROUNDING-RESULTS.md`。

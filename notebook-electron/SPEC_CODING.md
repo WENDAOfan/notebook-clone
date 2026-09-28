@@ -10,6 +10,10 @@
 
 离线 CI 的检出目录与各项目工作目录必须一致，见 [ci-checkout-path-fix.md](docs/ci-checkout-path-fix.md)。同一仓库只检出一次；Spring、Python、Electron 分别从仓库根目录下对应的子目录运行，不能为 Spring/Python 再次把整个仓库检出到 `notebook-clone/`。
 
+中文外部数据初测只走 Electron 的生产索引、检索和问答路径，见 [rgb-mini-eval.md](docs/rgb-mini-eval.md)。RGB 原始数据不复制进仓库；固定版本、样本选择规则、模型配置来源和逐题证据记录必须可复核。此测试是 RGB 改编的端到端小样本实验，不等同官方 RGB 分数，也不涉及 Java。
+
+桌面端用户数据迁移按 [local-storage-migration.md](docs/local-storage-migration.md) 执行：当前工作区内统一使用仓库根目录的 `.local-data/notebook-electron`，同时在 Electron `ready` 前设置 `userData` 与 `sessionData`；先复制并校验旧数据，旧目录暂留作为回退。该目录必须被 Git 忽略，不能进入发行包。
+
 本手册详细规范了从原 Java Web 版项目移植至 **Node.js + Electron + SQLite3** 桌面端的代码逻辑、数据传输、接口定义以及业务实现方式，以便后续的任务推进和维护。
 
 ---
@@ -72,7 +76,7 @@ graph TD
 ---
 
 ### 2.2 本地 SQLite3 数据库设计 (`database.js`)
-数据库存储于 Electron 的用户数据保存路径下（Windows 下为 `%APPDATA%/Roaming/notebook-electron/` 目录），确保程序更新不丢失数据。
+数据库存储于 Electron 的 `userData` 路径下。当前开发工作区及其 `dist/` 内构建把该路径指向仓库根目录 `.local-data/notebook-electron/`；工作区外的安装版可通过绝对路径 `NOTEBOOK_DATA_DIR` 指定位置，否则沿用 Electron 默认目录。向量、配置及 `sessionData` 也使用相同目录，详见 [迁移设计](docs/local-storage-migration.md)。
 
 #### A. 建表规范与外键关联：
 ```sql

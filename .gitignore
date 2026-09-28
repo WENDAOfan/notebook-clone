@@ -95,6 +95,10 @@ RAG知识库项目经历_简历优化稿.docx
 
 # 桌面 RAG 生成样本及在线评测输出；脚本和固定题目定义随源码保留。
 /notebook-electron/eval/fixtures/
+/notebook-electron/eval/rgb-upstream/
+/notebook-electron/eval/rgb-mini-report.json
+/notebook-electron/eval/rgb-mini-review.md
+/\.local-data/
 /notebook-electron/eval/report.json
 /notebook-electron/eval/*-report.json
 /notebook-electron/eval/embedding-fixed-acceptance.json

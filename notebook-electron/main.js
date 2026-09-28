@@ -2,6 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const dns = require('dns');
+const { configureStoragePaths } = require('./storage-path');
+
+// Must run before Electron's ready event so Chromium cache and app data share the selected path.
+configureStoragePaths(app, {
+  appDirectory: __dirname,
+  executablePath: process.execPath,
+  isPackaged: app.isPackaged,
+  defaultUserData: app.getPath('userData')
+});
 
 // 强制 Node.js 优先解析 IPv4 地址，规避本地网络环境下 IPv6 不通造成的 fetch failed 问题
 if (typeof dns.setDefaultResultOrder === 'function') {
