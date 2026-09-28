@@ -1,6 +1,8 @@
 const { OpenAI } = require('openai');
 const { getEncoding } = require('js-tiktoken');
 const crypto = require('crypto');
+const { ANSWER_GROUNDING_POLICY } = require('./answer-policy');
+const { requestEmbeddings } = require('./embedding-client');
 const configService = require('./config-service');
 const db = require('./database');
 const vectorStore = require('./vector-store');
@@ -84,13 +86,9 @@ function splitTextIntoChunks(text, chunkSize = 512, chunkOverlap = 100) {
 /**
  * 获取文本向量
  */
-async function getEmbedding(text) {
+async function getEmbedding(text, signal) {
   const { client, provider } = getZhipuClient();
-  const response = await client.embeddings.create({
-    model: provider.model || 'embedding-3',
-    input: text
-  });
-  return response.data[0].embedding;
+  return (await requestEmbeddings(client, provider, text, signal))[0];
 }
 
 /**
@@ -104,14 +102,7 @@ async function getEmbeddings(texts) {
   for (let i = 0; i < texts.length; i += batchSize) {
     const batch = texts.slice(i, i + batchSize);
     const { client, provider } = getZhipuClient();
-    const response = await client.embeddings.create({
-      model: provider.model || 'embedding-3',
-      input: batch
-    });
-    // 保证接口返回排序与输入一致
-    const batchEmbeddings = response.data
-      .sort((a, b) => a.index - b.index)
-      .map(item => item.embedding);
+    const batchEmbeddings = await requestEmbeddings(client, provider, batch);
     embeddings.push(...batchEmbeddings);
   }
   return embeddings;
@@ -240,7 +231,7 @@ function estimateHistoryTokens(messages) {
 /**
  * 智能历史消息压缩 (Day 30.5 移植)
  */
-async function compressHistoryIfNeed(messages) {
+async function compressHistoryIfNeed(messages, signal) {
   const HISTORY_TOKEN_BUDGET = 300000;
   const KEEP_RECENT_MESSAGES = 200; // 最近的200条消息不压缩
 
@@ -281,7 +272,7 @@ async function compressHistoryIfNeed(messages) {
           content: `请压缩以下对话历史：\n\n${oldText}`
         }
       ]
-    });
+    }, { signal });
 
     const summary = response.choices[0].message.content;
     const summaryMessage = {
@@ -488,6 +479,15 @@ async function generateDocumentSummarySync(documentId) {
 }
 
 const activeAskControllers = new Map();
+let askClientProvider = getDeepseekClient;
+function abortable(promise, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+  });
+}
 
 /**
  * 中断当前的 AI 问答请求
@@ -509,6 +509,11 @@ async function handleAskStream(event, payload) {
   const { id, type, question, useDocContext, requestId = crypto.randomUUID() } = payload;
   const webContents = event.sender;
   const sessionId = type === 'doc' ? `doc:${id}` : `notebook:${id}`;
+  const controller = new AbortController();
+  activeAskControllers.set(requestId, controller);
+  const startedAt = Date.now();
+  let timedOut = false;
+  const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 180000);
   const send = (channel, data = {}) => {
     if (!webContents.isDestroyed()) {
       webContents.send(channel, { requestId, ...data });
@@ -524,11 +529,15 @@ async function handleAskStream(event, payload) {
     }));
 
     // 智能压缩
-    historyMessages = await compressHistoryIfNeed(historyMessages);
+    historyMessages = await abortable(compressHistoryIfNeed(historyMessages, controller.signal), controller.signal);
+    controller.signal.throwIfAborted();
 
     // 2. 意图自适应与 Agentic RAG 工具配置
     const allSources = [];
-    let retrievalDiagnostics = null;
+    const retrievalDiagnostics = { rounds: [], warnings: [], compressionMs: Date.now() - startedAt };
+    let searches = 0;
+    let evidenceTokens = 0;
+    const encoding = getEncoding('cl100k_base');
 
     const tools = [
       {
@@ -584,32 +593,39 @@ async function handleAskStream(event, payload) {
     }
 
     const requestMessages = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: systemPrompt + (useDocContext ? ANSWER_GROUNDING_POLICY : '') },
       ...historyMessages,
       { role: 'user', content: question }
     ];
 
     // 4. 调用大模型并开启 Agentic RAG 流式工具循环 (传入 abort 信号)
-    const controller = new AbortController();
-    activeAskControllers.set(requestId, controller);
-    const { client, provider } = getDeepseekClient();
+    const { client, provider } = askClientProvider();
 
     let fullAnswer = "";
+    let estimatedPromptTokens = 0;
     const MAX_TURNS = 3;
 
-    for (let turn = 0; turn < MAX_TURNS; turn++) {
-      const stream = await client.chat.completions.create({
+    for (let turn = 0; turn <= MAX_TURNS; turn++) {
+      controller.signal.throwIfAborted();
+      estimatedPromptTokens += encoding.encode(JSON.stringify(requestMessages) + (useDocContext && turn < MAX_TURNS ? JSON.stringify(tools) : '')).length;
+      const stream = await abortable(client.chat.completions.create({
         model: provider.model || 'deepseek-chat',
         messages: requestMessages,
-        tools: useDocContext ? tools : undefined,
-        tool_choice: useDocContext ? 'auto' : undefined,
+        tools: useDocContext && turn < MAX_TURNS ? tools : undefined,
+        tool_choice: useDocContext && turn < MAX_TURNS ? 'auto' : undefined,
         stream: true
-      }, { signal: controller.signal });
+      }, { signal: controller.signal }), controller.signal);
 
       let toolCalls = [];
       let isToolTurn = false;
+      let bufferedText = '';
 
-      for await (const chunk of stream) {
+      const iterator = stream[Symbol.asyncIterator]();
+      while (true) {
+        const next = await abortable(iterator.next(), controller.signal);
+        if (next.done) break;
+        const chunk = next.value;
+        controller.signal.throwIfAborted();
         const delta = chunk.choices[0]?.delta;
         if (delta?.tool_calls?.length) {
           isToolTurn = true;
@@ -624,13 +640,21 @@ async function handleAskStream(event, payload) {
         }
         if (delta?.content) {
           if (!isToolTurn) {
-            fullAnswer += delta.content;
-            send('chat:chunk', { text: delta.content });
+            if (useDocContext && turn < MAX_TURNS) {
+              bufferedText += delta.content;
+            } else {
+              fullAnswer += delta.content;
+              send('chat:chunk', { text: delta.content });
+            }
           }
         }
       }
 
       if (!isToolTurn || toolCalls.length === 0) {
+        if (bufferedText) {
+          fullAnswer += bufferedText;
+          send('chat:chunk', { text: bufferedText });
+        }
         break;
       }
 
@@ -647,36 +671,30 @@ async function handleAskStream(event, payload) {
 
       // 依次执行工具调用
       for (const tc of toolCalls) {
+        let args;
+        try { args = JSON.parse(tc.arguments); } catch { args = null; }
+        if (!useDocContext || tc.name !== 'search_knowledge_base' || typeof args?.query !== 'string' || !args.query.trim() || searches >= 6 || turn === MAX_TURNS) {
+          requestMessages.push({ role: 'tool', tool_call_id: tc.id,
+            content: '工具不可用：名称或参数无效，或已达检索预算。请依据已有证据完成回答，不能编造。' });
+          continue;
+        }
         if (tc.name === 'search_knowledge_base') {
-          let args = {};
-          try { args = JSON.parse(tc.arguments || '{}'); } catch (_) {}
-          const searchQuery = args.query || question;
+          searches += 1;
+          const searchQuery = args.query.trim();
 
-          const retrieval = await retrievalService.retrieve({
+          const retrieval = await abortable(retrievalService.retrieve({
             scopeType: type === 'doc' ? 'document' : 'notebook',
             scopeId: Number(id),
             query: searchQuery,
             history: historyMessages,
-            tokenBudget: 8000
-          });
-          retrievalDiagnostics = retrieval.diagnostics;
+            tokenBudget: 8000 - evidenceTokens,
+            signal: controller.signal
+          }), controller.signal);
+          retrievalDiagnostics.rounds.push(retrieval.diagnostics);
+          retrievalDiagnostics.warnings = [...new Set([...retrievalDiagnostics.warnings, ...retrieval.diagnostics.warnings])];
 
           // 新文档尚未完成索引时，单文档问答安全兜底读取原文
-          let chunksToUse = retrieval.chunks;
-          if (!chunksToUse.length && type === 'doc') {
-            const doc = await db.getDocumentById(Number(id));
-            if (doc?.content) {
-              const snippet = doc.content.slice(0, 8000);
-              chunksToUse = [{
-                id: `doc:${doc.id}:raw-fallback`,
-                chunkId: `doc:${doc.id}:raw-fallback`,
-                documentId: doc.id,
-                text: snippet,
-                metadata: { documentId: doc.id, documentTitle: doc.title },
-                scores: { vector: null, bm25: null, rrf: null }
-              }];
-            }
-          }
+          const chunksToUse = retrieval.chunks;
 
           const formattedChunks = [];
           for (const chunk of chunksToUse) {
@@ -684,9 +702,12 @@ async function handleAskStream(event, payload) {
             let existing = allSources.find(s => s.chunkId === chunkKey);
             let citationId;
             if (existing) {
-              citationId = existing.citationId;
+              continue;
             } else {
               citationId = allSources.length + 1;
+              const cost = encoding.encode(`[${citationId}] 来源：${chunk.metadata?.documentTitle || '未知文档'}\n${chunk.text}\n\n---\n\n`).length;
+              if (evidenceTokens + cost > 8000) continue;
+              evidenceTokens += cost;
               allSources.push({
                 citationId,
                 chunkId: chunkKey,
@@ -713,15 +734,19 @@ async function handleAskStream(event, payload) {
           requestMessages.push({
             role: 'tool',
             tool_call_id: tc.id,
-            content: toolContext
+            content: `${retrieval.diagnostics.warnings.length ? '检索状态（非文档证据）：' + retrieval.diagnostics.warnings.join('\n') + '\n' : ''}${toolContext}`
           });
         }
       }
     }
 
-    if (!allSources.length) {
-      send('chat:sources', { sources: [], diagnostics: null });
-    }
+    if (!fullAnswer.trim()) throw new Error('模型未生成最终回答，请重试');
+    const invalid = [...fullAnswer.matchAll(/[\[【](\d+)[\]】]/g)].map(match => Number(match[1]))
+      .filter(number => !allSources.some(source => source.citationId === number));
+    if (invalid.length) retrievalDiagnostics.warnings.push(`引用校验未通过：${[...new Set(invalid)].join(', ')}`);
+    retrievalDiagnostics.evidenceTokens = evidenceTokens;
+    retrievalDiagnostics.elapsedMs = Date.now() - startedAt;
+    send('chat:sources', { sources: allSources, diagnostics: retrievalDiagnostics });
 
     activeAskControllers.delete(requestId);
 
@@ -731,8 +756,7 @@ async function handleAskStream(event, payload) {
     await db.saveChatMessage(sessionId, 'user', question, docId, nbId);
     // 6. 估算 Token 用量并保存结构化来源
     const enc = getEncoding('cl100k_base');
-    const promptTokens = enc.encode(systemPrompt + question).length +
-                         historyMessages.reduce((sum, m) => sum + enc.encode(m.content).length, 0);
+    const promptTokens = estimatedPromptTokens;
     const completionTokens = enc.encode(fullAnswer).length;
     const usage = {
       prompt: promptTokens,
@@ -754,18 +778,23 @@ async function handleAskStream(event, payload) {
   } catch (err) {
     activeAskControllers.delete(requestId);
     if (err.name === 'AbortError') {
+      if (timedOut) { send('chat:error', { message: '问答超过 180 秒，已终止' }); return; }
       console.log("[RAG 问答流] 请求已由用户成功中断");
       send('chat:end', { aborted: true });
       return;
     }
     console.error("[RAG 问答流] 失败:", err);
     send('chat:error', { message: err.message || "大模型连接超时，请重试" });
+  } finally {
+    clearTimeout(timer);
+    activeAskControllers.delete(requestId);
   }
 }
 
-retrievalService.configure({ getEmbedding });
+retrievalService.configure({ getEmbedding, getEmbeddingModel: () => configService.getConfig().zhipu?.model || 'embedding-3' });
 
 module.exports = {
+  configureAskClient: provider => { askClientProvider = provider || getDeepseekClient; },
   splitTextIntoChunks,
   getEmbedding,
   getEmbeddings,

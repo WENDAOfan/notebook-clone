@@ -219,7 +219,7 @@ function askDocumentStreamAPI(documentId, question, useDocumentContext, onChunk,
             if (onTokenUsage) onTokenUsage(data.usage);
         });
         const cleanSources = window.electronAPI.onChatSources((data) => {
-            if (data.requestId === requestId && onSources) onSources(data.sources || []);
+            if (data.requestId === requestId && onSources) onSources(data.sources || [], data.diagnostics);
         });
 
         const cleanEnd = window.electronAPI.onChatEnd((data) => {
@@ -271,7 +271,7 @@ function askNotebookStreamAPI(notebookId, question, onChunk, onTokenUsage, onSou
             if (onTokenUsage) onTokenUsage(data.usage);
         });
         const cleanSources = window.electronAPI.onChatSources((data) => {
-            if (data.requestId === requestId && onSources) onSources(data.sources || []);
+            if (data.requestId === requestId && onSources) onSources(data.sources || [], data.diagnostics);
         });
 
         const cleanEnd = window.electronAPI.onChatEnd((data) => {
@@ -887,13 +887,14 @@ function renderChatHistory(history, container, defaultTitle) {
             const ai = appendAiBubble(container);
             const legacy = parseCitations(msg.content, defaultTitle);
             const answer = legacy.answer;
-            const citations = msg.metadata?.sources?.length
+            const citations = Array.isArray(msg.metadata?.sources)
                 ? structuredSourcesToCitations(msg.metadata.sources, answer)
                 : legacy.citations;
             ai.textEl.innerHTML = DOMPurify.sanitize(marked.parse(answer));
             if (citations.length > 0) {
                 renderCitationCards(citations, ai.citationEl);
             }
+            renderRetrievalDiagnostics(msg.metadata?.retrieval, ai.citationEl);
         }
     }
     container.scrollTop = container.scrollHeight;
@@ -910,6 +911,24 @@ function structuredSourcesToCitations(sources, answer = '') {
     }));
     if (referenced.size === 0) return normalized;
     return normalized.filter(source => referenced.has(Number(source.id)));
+}
+
+function renderRetrievalDiagnostics(diagnostics, container) {
+    if (!diagnostics) return;
+    container.style.display = 'block';
+    if (diagnostics.warnings?.length) {
+        const notice = document.createElement('p');
+        notice.textContent = diagnostics.warnings.join('\n');
+        container.appendChild(notice);
+    }
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.textContent = '检索诊断';
+    const body = document.createElement('pre');
+    body.style.whiteSpace = 'pre-wrap';
+    body.textContent = JSON.stringify(diagnostics, null, 2);
+    details.append(summary, body);
+    container.appendChild(details);
 }
 
 /** 加载文档对话历史 */
@@ -1023,6 +1042,7 @@ async function askDocument() {
 
     let currentUsage = null;
     let currentSources = [];
+    let currentDiagnostics = null;
 
     try {
         await askDocumentStreamAPI(
@@ -1039,8 +1059,9 @@ async function askDocument() {
             (usage) => {
                 currentUsage = usage;
             },
-            (sources) => {
+            (sources, diagnostics) => {
                 currentSources = sources;
+                currentDiagnostics = diagnostics;
             }
         );
 
@@ -1056,14 +1077,13 @@ async function askDocument() {
         const currentDocTitle = document.getElementById('docViewTitle').textContent;
         const legacy = parseCitations(ai.rawText, currentDocTitle);
         const answer = legacy.answer;
-        const citations = currentSources.length
-            ? structuredSourcesToCitations(currentSources, answer)
-            : legacy.citations;
+        const citations = structuredSourcesToCitations(currentSources, answer);
         ai.textEl.innerHTML = DOMPurify.sanitize(marked.parse(answer));
 
         if (citations.length > 0) {
             renderCitationCards(citations, ai.citationEl);
         }
+        renderRetrievalDiagnostics(currentDiagnostics, ai.citationEl);
 
         if (currentUsage) {
             ai.tokenEl.innerHTML = renderTokenUsageHtml(currentUsage);
@@ -1126,6 +1146,7 @@ async function askNotebook() {
 
     let currentUsage = null;
     let currentSources = [];
+    let currentDiagnostics = null;
 
     try {
         await askNotebookStreamAPI(
@@ -1140,8 +1161,9 @@ async function askNotebook() {
             (usage) => {
                 currentUsage = usage;
             },
-            (sources) => {
+            (sources, diagnostics) => {
                 currentSources = sources;
+                currentDiagnostics = diagnostics;
             }
         );
 
@@ -1155,14 +1177,13 @@ async function askNotebook() {
 
         const legacy = parseCitations(ai.rawText);
         const answer = legacy.answer;
-        const citations = currentSources.length
-            ? structuredSourcesToCitations(currentSources, answer)
-            : legacy.citations;
+        const citations = structuredSourcesToCitations(currentSources, answer);
         ai.textEl.innerHTML = DOMPurify.sanitize(marked.parse(answer));
 
         if (citations.length > 0) {
             renderCitationCards(citations, ai.citationEl);
         }
+        renderRetrievalDiagnostics(currentDiagnostics, ai.citationEl);
 
         if (currentUsage) {
             ai.tokenEl.innerHTML = renderTokenUsageHtml(currentUsage);

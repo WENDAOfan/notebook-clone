@@ -25,7 +25,7 @@ function sleep(ms) {
 async function fetchWithRetry(url, options = {}, maxRetries = 3, delay = 1500) {
   for (let i = 0; i < maxRetries; i++) {
     try {
-      return await fetch(url, options);
+      return await fetch(url, { ...options, signal: options.signal || AbortSignal.timeout(30000) });
     } catch (err) {
       const isRetryable = err.name === 'TypeError'
         || err.code === 'ECONNRESET'
@@ -164,12 +164,20 @@ async function extractText(filePath) {
   }
 
   const ext = path.extname(filePath).toLowerCase();
+  if (ext === '.pdf' || ext === '.docx') {
+    const descriptor = fs.openSync(filePath, 'r');
+    const header = Buffer.alloc(5);
+    try { fs.readSync(descriptor, header, 0, 5, 0); }
+    finally { fs.closeSync(descriptor); }
+    if (ext === '.pdf' && header.toString('ascii') !== '%PDF-') throw new Error('PDF文件头无效，未导入');
+    if (ext === '.docx' && !header.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) throw new Error('DOCX文件头无效，未导入');
+  }
   let rawText = '';
 
   // TXT / MD：本地直读，无需云端
   if (ext === '.txt' || ext === '.md') {
     rawText = fs.readFileSync(filePath, 'utf-8');
-    return cleanText(rawText);
+    return requireText(rawText);
   }
 
   // PDF / DOCX：优先 LlamaParse，失败时 fallback 到本地库
@@ -182,7 +190,7 @@ async function extractText(filePath) {
         console.log(`[Extractor] 检测到 LlamaParse API Key，尝试云端解析: ${path.basename(filePath)}`);
         rawText = await extractWithLlamaParse(filePath);
         // LlamaParse 输出的 Markdown 本身已很干净，仅做轻度清洗
-        return cleanText(rawText);
+        return requireText(rawText);
       } catch (err) {
         console.warn(`[Extractor] LlamaParse 解析失败，降级至本地（LiteParse/mammoth）。原因: ${err.message}`, err.cause || '');
         // 继续执行下方的 fallback 逻辑
@@ -197,7 +205,7 @@ async function extractText(filePath) {
         const result = await mammoth.extractRawText({ path: filePath });
         rawText = result.value;
       } catch (e) {
-        rawText = `[Word文档解析失败: ${e.message}]\n文件名: ${path.basename(filePath)}`;
+        throw new Error(`Word文档解析失败: ${e.message}`);
       }
     } else if (ext === '.pdf') {
       try {
@@ -207,17 +215,23 @@ async function extractText(filePath) {
         const result = await parser.parse(filePath);
         rawText = result.markdown || result.text || '';
         if (!rawText || rawText.trim().length === 0) {
-          rawText = `[PDF文本提取为空，该文件可能是扫描版/图片型PDF，暂无法提取文本内容]\n文件名: ${path.basename(filePath)}`;
+          throw new Error('PDF文本提取为空，无法用于问答');
         }
       } catch (e) {
-        rawText = `[PDF解析失败: ${e.message}]\n文件名: ${path.basename(filePath)}`;
+        throw new Error(`PDF解析失败: ${e.message}`);
       }
     }
 
-    return cleanText(rawText);
+    return requireText(rawText);
   }
 
   throw new Error(`不支持的文件格式: ${ext}`);
+}
+
+function requireText(text) {
+  const result = cleanText(text);
+  if (!result.trim()) throw new Error('文档解析结果为空，未导入');
+  return result;
 }
 
 module.exports = {

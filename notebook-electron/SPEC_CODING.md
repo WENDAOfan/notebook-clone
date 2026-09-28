@@ -1,5 +1,15 @@
 # Notebook Clone 本地桌面端开发与代码规范手册 (SPEC_CODING)
 
+智谱 Embedding 必须显式请求 float 格式并校验响应，见 [embedding-encoding-fix.md](docs/embedding-encoding-fix.md)。
+
+回答事实边界遵循 [rag-answer-grounding.md](docs/rag-answer-grounding.md)：拒绝沿用问题中的未证实前提，同时保留明确承诺的正常回答能力。
+
+桌面 RAG 正确性与真实验收按 [desktop-rag-reliability.md](docs/desktop-rag-reliability.md) 执行；离线通过不等于真实效果验收通过。
+
+源码仓库的提交范围与可再生评测资料见 [source-publish-scope.md](docs/source-publish-scope.md)。固定题目定义随评测程序提交；由生成脚本产生的 TXT/MD/DOCX/PDF 样本、在线运行报告和面试架构图保留本地，不进入源码提交。默认离线测试不得依赖被忽略的生成文件；固定题目核对不应要求可选的 DOCX/PDF 生成依赖。
+
+离线 CI 的检出目录与各项目工作目录必须一致，见 [ci-checkout-path-fix.md](docs/ci-checkout-path-fix.md)。同一仓库只检出一次；Spring、Python、Electron 分别从仓库根目录下对应的子目录运行，不能为 Spring/Python 再次把整个仓库检出到 `notebook-clone/`。
+
 本手册详细规范了从原 Java Web 版项目移植至 **Node.js + Electron + SQLite3** 桌面端的代码逻辑、数据传输、接口定义以及业务实现方式，以便后续的任务推进和维护。
 
 ---
@@ -271,3 +281,6 @@ CREATE TABLE chat_messages (
 6. 每次评测输出结构化明细与汇总；运行报告目录必须忽略，只保留脱敏样例报告。
 7. 普通 CI 只执行 Java、Electron 和 Python 离线测试；在线 LLM 评测仅允许手动触发并从
    GitHub Secrets 注入配置。
+# Java RAG 上下文策略补充
+
+Java 问答开关、索引状态及空检索行为见 [java-rag-context-policy.md](docs/java-rag-context-policy.md)。本补充不改变 Electron 的检索策略。

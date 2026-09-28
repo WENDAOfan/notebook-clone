@@ -22,15 +22,15 @@ import java.util.concurrent.atomic.AtomicReference;
 public class AiChatService {
 
     private final ChatClient chatClient;
-    private final RetrievalService retrievalService;
+    private final RagContextService contextService;
     private final ChatHistoryService chatHistoryService;  // Day 30 新增：对话历史
     private final ContextCompressionService compressionService;  // Day 30.5 新增：上下文压缩
 
-    public AiChatService(ChatClient.Builder chatClientBuilder, RetrievalService retrievalService,
+    public AiChatService(ChatClient.Builder chatClientBuilder, RagContextService contextService,
                          ChatHistoryService chatHistoryService,
                          ContextCompressionService compressionService) {
         this.chatClient = chatClientBuilder.build();
-        this.retrievalService = retrievalService;
+        this.contextService = contextService;
         this.chatHistoryService = chatHistoryService;
         this.compressionService = compressionService;
     }
@@ -52,10 +52,14 @@ public class AiChatService {
     public String askBasedOnDocument(String documentContent, String question,
                                      boolean useDocumentContext,
                                      Long documentId, Long userId) {
-        // 如果文档内容为空，且用户要求基于文档回答
-        if ((documentContent == null || documentContent.trim().isEmpty()) && useDocumentContext) {
-            return "文档内容为空，无法回答问题。";
+        // 先决定是否具备回答依据，避免无效请求触发模型或历史压缩。
+        RagContextService.Context prepared = useDocumentContext
+                ? contextService.document(documentId, question)
+                : new RagContextService.Context("", null);
+        if (prepared.message() != null) {
+            return prepared.message();
         }
+        String context = prepared.text();
 
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildDocSessionId(documentId, userId);
@@ -67,22 +71,6 @@ public class AiChatService {
             history = compressionService.compress(history);
         }
         // ================================
-
-        // ===== Day 29：RAG 检索替代全文塞入 =====
-        List<String> relevantChunks = retrievalService.retrieveDocumentChunks(question, documentId, 5)
-                .stream().map(RetrievalService.RetrievedChunk::formattedText).toList();
-
-        String context;
-        if (relevantChunks.isEmpty()) {
-            // 向量存储中还没有该文档的块（可能分块任务还没跑完）
-            // 降级为全文截断模式
-            context = documentContent != null && documentContent.length() > 8000
-                    ? documentContent.substring(0, 8000) + "\n...（内容已截断）"
-                    : documentContent;
-        } else {
-            context = String.join("\n\n---\n\n", relevantChunks);
-        }
-        // ========================================
 
         // 根据开关选择 System Prompt
         String systemPrompt = buildSingleDocSystemPrompt(useDocumentContext);
@@ -135,10 +123,12 @@ public class AiChatService {
     )
     public String askBasedOnDocuments(List<String[]> documents, String question,
                                       Long notebookId, Long userId) {
-        // 如果没有文档
-        if (documents == null || documents.isEmpty()) {
-            return "该笔记本下没有文档，无法回答问题。";
+        // 先决定是否具备回答依据，避免无效请求触发模型或历史压缩。
+        RagContextService.Context prepared = contextService.notebook(notebookId, question);
+        if (prepared.message() != null) {
+            return prepared.message();
         }
+        String context = prepared.text();
 
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildNotebookSessionId(notebookId, userId);
@@ -150,56 +140,6 @@ public class AiChatService {
             history = compressionService.compress(history);
         }
         // ================================
-
-        // ===== Day 29：用 RAG 替代"拼接所有文档" =====
-        List<String> relevantChunks = retrievalService.retrieveNotebookChunks(question, notebookId, 8)
-                .stream().map(RetrievalService.RetrievedChunk::formattedText).toList();
-
-        String context;
-        if (relevantChunks.isEmpty()) {
-            // 降级为旧逻辑：拼接所有文档
-            StringBuilder contextBuilder = new StringBuilder();
-            int totalLength = 0;
-            final int MAX_LENGTH = 50000;
-            boolean truncated = false;
-
-            for (String[] doc : documents) {
-                String title = doc[0];
-                String content = doc[1];
-
-                if (content == null || content.trim().isEmpty()) {
-                    continue;
-                }
-
-                String docSection = "\n【文档：" + title + "】\n" + content.trim() + "\n";
-
-                if (totalLength + docSection.length() > MAX_LENGTH) {
-                    int remaining = MAX_LENGTH - totalLength;
-                    if (remaining > 100) {
-                        String partial = docSection.substring(0, remaining);
-                        contextBuilder.append(partial).append("\n...（内容已截断）");
-                        totalLength = MAX_LENGTH;
-                    }
-                    truncated = true;
-                    break;
-                } else {
-                    contextBuilder.append(docSection);
-                    totalLength += docSection.length();
-                }
-            }
-
-            context = contextBuilder.toString();
-            if (context.isEmpty()) {
-                return "该笔记本下的文档内容均为空，无法回答问题。";
-            }
-
-            if (truncated) {
-                context += "\n...（更多文档内容因长度限制未纳入上下文）";
-            }
-        } else {
-            context = String.join("\n\n---\n\n", relevantChunks);
-        }
-        // ============================================
 
         String systemPrompt = buildMultiDocSystemPrompt();
         String userPrompt = buildMultiDocUserPrompt(context, question);
@@ -297,13 +237,14 @@ public class AiChatService {
     public Flux<ServerSentEvent<String>> askBasedOnDocumentStream(
             String documentContent, String question, boolean useDocumentContext,
             Long documentId, Long userId) {
-        
-        // 空文档判断
-        if ((documentContent == null || documentContent.trim().isEmpty()) && useDocumentContext) {
-            return Flux.just(ServerSentEvent.<String>builder()
-                    .data("文档内容为空，无法回答问题。")
-                    .build());
+        // 先决定是否具备回答依据，避免无效请求触发模型或历史压缩。
+        RagContextService.Context prepared = useDocumentContext
+                ? contextService.document(documentId, question)
+                : new RagContextService.Context("", null);
+        if (prepared.message() != null) {
+            return Flux.just(ServerSentEvent.<String>builder().data(prepared.message()).build());
         }
+        String context = prepared.text();
 
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildDocSessionId(documentId, userId);
@@ -316,19 +257,6 @@ public class AiChatService {
         }
         // ================================
 
-        // ===== Day 29：RAG 检索替代全文塞入（流式）=====
-        List<String> relevantChunks = retrievalService.retrieveDocumentChunks(question, documentId, 5)
-                .stream().map(RetrievalService.RetrievedChunk::formattedText).toList();
-
-        String context;
-        if (relevantChunks.isEmpty()) {
-            context = documentContent != null && documentContent.length() > 8000
-                    ? documentContent.substring(0, 8000) + "\n...（内容已截断）"
-                    : documentContent;
-        } else {
-            context = String.join("\n\n---\n\n", relevantChunks);
-        }
-        // ============================================
         // 复用私有方法构建 Prompt
         String systemPrompt = buildSingleDocSystemPrompt(useDocumentContext);
         String userPrompt = buildSingleDocUserPrompt(context, question, useDocumentContext);
@@ -399,13 +327,12 @@ public class AiChatService {
     public Flux<ServerSentEvent<String>> askBasedOnDocumentsStream(
             List<String[]> documents, String question,
             Long notebookId, Long userId) {
-        
-        // 如果没有文档
-        if (documents == null || documents.isEmpty()) {
-            return Flux.just(ServerSentEvent.<String>builder()
-                    .data("该笔记本下没有文档，无法回答问题。")
-                    .build());//注意！流式返回 Flux.just(...)
+        // 先决定是否具备回答依据，避免无效请求触发模型或历史压缩。
+        RagContextService.Context prepared = contextService.notebook(notebookId, question);
+        if (prepared.message() != null) {
+            return Flux.just(ServerSentEvent.<String>builder().data(prepared.message()).build());
         }
+        String context = prepared.text();
 
         // ===== Day 30：读取对话历史 =====
         String sessionId = chatHistoryService.buildNotebookSessionId(notebookId, userId);
@@ -418,55 +345,6 @@ public class AiChatService {
         }
         // ================================
 
-        // ===== Day 29：用 RAG 替代"拼接所有文档"（流式）=====
-        List<String> relevantChunks = retrievalService.retrieveNotebookChunks(question, notebookId, 8)
-                .stream().map(RetrievalService.RetrievedChunk::formattedText).toList();
-
-        String context;
-        if (relevantChunks.isEmpty()) {
-            // 降级为旧逻辑：拼接所有文档
-            StringBuilder contextBuilder = new StringBuilder();
-            int totalLength = 0;
-            final int MAX_LENGTH = 50000;
-            boolean truncated = false;
-
-            for (String[] doc : documents) {
-                String title = doc[0];
-                String content = doc[1];
-
-                if (content == null || content.trim().isEmpty()) {
-                    continue;
-                }
-
-                String docSection = "\n【文档：" + title + "】\n" + content.trim() + "\n";
-
-                if (totalLength + docSection.length() > MAX_LENGTH) {
-                    int remaining = MAX_LENGTH - totalLength;
-                    if (remaining > 100) {
-                        String partial = docSection.substring(0, remaining);
-                        contextBuilder.append(partial).append("\n...（内容已截断）");
-                        totalLength = MAX_LENGTH;
-                    }
-                    truncated = true;
-                    break;
-                } else {
-                    contextBuilder.append(docSection);
-                    totalLength += docSection.length();
-                }
-            }
-            context = contextBuilder.toString();
-            if (context.isEmpty()) {
-                return Flux.just(ServerSentEvent.<String>builder()
-                        .data("该笔记本下的文档内容均为空，无法回答问题。")
-                        .build());
-            }
-            if (truncated) {
-                context += "\n...（更多文档内容因长度限制未纳入上下文）";
-            }
-        } else {
-            context = String.join("\n\n---\n\n", relevantChunks);
-        }
-        // ============================================
         String systemPrompt = buildMultiDocSystemPrompt();
         String userPrompt = buildMultiDocUserPrompt(context, question);
         

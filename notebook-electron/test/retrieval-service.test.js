@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const db = require('../database');
 const vectorStore = require('../vector-store');
@@ -26,12 +27,16 @@ test.before(async () => {
   vectorStore.init(path.join(tempDirectory, 'vectors.json'));
   for (const [title, content, embedding] of fixtures) {
     const document = await db.createDocument(notebook.id, title, content);
+    const contentHash = crypto.createHash('sha256').update(content).digest('hex');
+    await db.updateDocumentIndexStatus(document.id, 'ready', { contentHash });
     documents.set(title, document);
     await vectorStore.add([{
       id: `doc:${document.id}:fixture:0`,
       text: content,
       metadata: {
         schemaVersion: 2,
+        contentHash,
+        embeddingModel: 'embedding-3',
         documentId: document.id,
         documentTitle: title,
         chunkIndex: 0
@@ -105,4 +110,43 @@ test('结构化来源编号稳定并包含诊断信息', async () => {
   assert.equal(result.sources[0].citationId, 1);
   assert.equal(result.sources[0].documentTitle, '账户安全规范');
   assert.equal(result.diagnostics.selectedChunks, result.sources.length);
+});
+test('部分就绪笔记本排除 pending 和 stale 文档并返回警告', async () => {
+  const pending = await db.createDocument(notebook.id, '待索引', '内容');
+  const result = await retrievalService.retrieve({ scopeType: 'notebook', scopeId: notebook.id, query: '极光X1保修', queryEmbedding: [1,0,0,0] });
+  assert.ok(result.sources.length > 0);
+  assert.ok(result.sources.every(source => source.documentId !== pending.id));
+  assert.match(result.diagnostics.warnings.join(''), /待索引/);
+  const doc = documents.get('极光X1产品手册');
+  await db.markDocumentIndexStale(doc.id);
+  const stale = await retrievalService.retrieve({ scopeType: 'document', scopeId: doc.id, query: '保修', queryEmbedding: [1,0,0,0] });
+  assert.deepEqual(stale.sources, []);
+});
+test('标识符必须完整匹配，X1 不匹配 X10；无匹配不清空候选', () => {
+  const candidates = [{ text: '设备X1的条款' }, { text: '设备X10的条款' }];
+  assert.deepEqual(retrievalService.preferIdentifiers(candidates, 'X1保修'), [candidates[0]]);
+  assert.deepEqual(retrievalService.preferIdentifiers(candidates, 'X99保修'), candidates);
+});
+test('全零向量显式降级，低于固定BM25门槛的双词匹配仍可召回', async () => {
+  const content = '退款通常四天到账';
+  const doc = await db.createDocument(notebook.id, '短文档', content);
+  const contentHash = crypto.createHash('sha256').update(content).digest('hex');
+  await db.updateDocumentIndexStatus(doc.id, 'ready', { contentHash });
+  await vectorStore.add([{ id: 'short-zero', text: content, embedding: [0,0,0,0], metadata: { documentId: doc.id, documentTitle: doc.title, contentHash, embeddingModel: 'embedding-3' } }]);
+  const result = await retrievalService.retrieve({ scopeType: 'document', scopeId: doc.id, query: '退款 到账', queryEmbedding: [0,0,0,0] });
+  assert.equal(result.sources.length, 1);
+  assert.equal(result.diagnostics.vectorCandidates, 0);
+  assert.match(result.diagnostics.warnings.join(''), /全零/);
+  assert.ok(result.sources[0].scores.bm25 < 1);
+});
+test('模型或内容哈希不匹配的 ready 索引不可检索', async () => {
+  const doc = documents.get('电池安全指南');
+  retrievalService.configure({ getEmbeddingModel: () => 'other-model' });
+  try {
+    const result = await retrievalService.retrieve({ scopeType: 'document', scopeId: doc.id, query: '电池', queryEmbedding: [0,1,0,0] });
+    assert.deepEqual(result.sources, []);
+  } finally { retrievalService.configure({ getEmbeddingModel: () => 'embedding-3' }); }
+  await db.updateDocumentIndexStatus(doc.id, 'ready', { contentHash: 'wrong' });
+  const result = await retrievalService.retrieve({ scopeType: 'document', scopeId: doc.id, query: '电池', queryEmbedding: [0,1,0,0] });
+  assert.deepEqual(result.sources, []);
 });
