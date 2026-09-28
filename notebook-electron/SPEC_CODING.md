@@ -8,6 +8,8 @@
 
 源码仓库的提交范围与可再生评测资料见 [source-publish-scope.md](docs/source-publish-scope.md)。固定题目定义随评测程序提交；由生成脚本产生的 TXT/MD/DOCX/PDF 样本、在线运行报告和面试架构图保留本地，不进入源码提交。默认离线测试不得依赖被忽略的生成文件；固定题目核对不应要求可选的 DOCX/PDF 生成依赖。
 
+离线 CI 的检出目录与各项目工作目录必须一致，见 [ci-checkout-path-fix.md](docs/ci-checkout-path-fix.md)。同一仓库只检出一次；Spring、Python、Electron 分别从仓库根目录下对应的子目录运行，不能为 Spring/Python 再次把整个仓库检出到 `notebook-clone/`。
+
 本手册详细规范了从原 Java Web 版项目移植至 **Node.js + Electron + SQLite3** 桌面端的代码逻辑、数据传输、接口定义以及业务实现方式，以便后续的任务推进和维护。
 
 ---

@@ -15,11 +15,6 @@ jobs:
         working-directory: notebook-clone
     steps:
       - uses: actions/checkout@v4
-      - name: Check out Spring and Python repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/notebook-clone
-          path: notebook-clone
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -50,11 +45,6 @@ jobs:
         working-directory: notebook-clone/rag-eval-lab
     steps:
       - uses: actions/checkout@v4
-      - name: Check out Spring and Python repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/notebook-clone
-          path: notebook-clone
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
