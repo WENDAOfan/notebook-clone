@@ -1,224 +1,100 @@
 # Notebook Clone
 
-> 一个受 NotebookLM 启发的智能笔记本：上传文档，与你的资料对话。基于 Spring Boot + Spring AI + DeepSeek 构建，支持 RAG 检索增强、流式问答与引用溯源。
->
-> A NotebookLM-inspired smart notebook: upload documents and chat with your own knowledge base. Built with Spring Boot + Spring AI + DeepSeek, featuring RAG, streaming Q&A, and citation tracing.
+一个受 NotebookLM 启发的多端知识库项目：导入资料，以文档证据进行问答，并查看引用来源。仓库包含 Spring Boot Web 版与 Electron 桌面版；两端有各自的数据存储和启动入口，并非自动同步的同一数据库。
 
-[中文](#中文) · [English](#english)
+## 从哪里开始
 
----
+| 模块 | 用途 | 入口 |
+| --- | --- | --- |
+| Electron 桌面端 | 本地笔记本、文档导入、混合检索、流式问答、人工审批整理 | [桌面端 README](notebook-electron/README.md) |
+| Spring Boot Web 端 | JWT 多用户认证、资源隔离、文档与聊天管理、RAG 问答 | [Web 端 README](notebook-clone/README.md) |
+| 桌面 RAG 评测 | 生产链路对照、固定题集、证据召回与回答核对 | [评测说明](notebook-electron/eval/README.md) |
+| Python RAG-Eval-Lab | 独立评测工具与离线测试 | [Python README](notebook-clone/rag-eval-lab/README.md) |
 
-## 中文
+## 桌面端当前能力
 
-### ✨ 功能特性
+- 支持 TXT、Markdown、PDF、DOCX 导入，保存笔记本、文档与聊天历史。
+- 向量检索与 BM25 经 RRF 融合，再进行完整主体／型号软排序、重叠片段降序和有界句子补全。
+- DeepSeek 配置就绪时默认启用受限语义重排：最多16个候选，每题最多一次尝试；失败或8秒超时回退基础排序。
+- 问答 Agent 按需调用检索工具，支持多轮检索、流式输出、停止生成、引用编号校验及检索诊断。
+- 只使用就绪且内容哈希、Embedding 模型一致的索引。未就绪资料有提示；无证据不截取全文冒充检索结果。
+- 整理 Agent 只读原资料，写入新整理稿前逐次请求人工审批。联网研究支持来源预览与选择后导入。
 
-- 🔐 JWT 用户认证与数据隔离（每个用户只看自己的笔记本）
-- 📚 笔记本 / 文档 CRUD，支持文本新建与文件上传（`.txt` / `.md` / `.docx` / `.pdf`）
-- 🧹 文档文本清洗：去控制字符、水印行（空格占比 >40%）、重复行（≥3 次）
-- ✨ 异步 AI 摘要生成（`@Async` + `@Retryable` 重试 + `@Recover` 兜底）
-- 💬 单文档 / 笔记本级 AI 问答（RAG 检索增强）
-- 🌊 SSE 流式"打字机"输出
-- 🔖 引用溯源：回答标注来源段落 `[N]`
-- 🧠 向量检索：Token 分块（512 + 重叠 50）+ 智谱 Embedding + SimpleVectorStore 文件持久化
-- 🔁 多轮对话：上下文压缩（300K token 预算，保留最近 200 轮完整消息）
-- 📊 Token 用量统计与展示
-- 🖥 原生前端：三栏可拖拽布局 + Hash 路由 + Markdown 渲染
+桌面端使用 Electron、SQLite、本地 JSON 向量文件、DeepSeek 和智谱 Embedding。数据在本地管理，但对话、Embedding 及可选云端解析会将相应文本或文件发送至配置的服务；不是完全离线模型。
 
-### 🛠 技术栈
+### 检索改进实测（2026-10-03）
 
-| 层 | 选型 |
-| :--- | :--- |
-| 后端 | Spring Boot 3.4.2 · Java 21 · Spring AI 1.0.0 |
-| 持久化 | PostgreSQL · Spring Data JPA · Hibernate |
-| 安全 | Spring Security · JWT (jjwt 0.12.3) · BCrypt |
-| AI | DeepSeek（Chat）· 智谱 AI（Embedding）· Spring AI |
-| 文档解析 | Apache PDFBox 3.0.1 · Apache POI 5.2.5 |
-| 健壮性 | Spring Retry · `@Async` 线程池 |
-| 前端 | 原生 HTML/CSS/JS · marked.js 12 |
+下表是固定虚构资料上的生产检索结果。MRR 为**证据级**倒数排名，多证据题逐项计数，不等于标准按题首个正确结果 MRR。
 
-### 🚀 快速开始
+| 测试范围 | 必要证据 Recall@5 | 证据 MRR |
+| --- | --- | --- |
+| 80篇近名资料，旧策略 → 当前策略 | 14/18 → 18/18 | 0.762 → 0.852 |
+| 新冻结资料：12篇、132块、14题 | 15/15 | 0.900 |
 
-**前置条件**：JDK 21+、Maven 3.9+、PostgreSQL 14+、DeepSeek API Key、智谱 AI API Key。
+新增确认集有12道有答案题和2道无答案题；助手对照引用核对主要事实12/12、拒答2/2。不是独立人工盲审，也不是 RGB 官方分数，不能据此保证所有资料100%召回或回答无幻觉。旧长文指标上限问题、历史失败和回答侧局限见 [完整交付报告](notebook-electron/docs/retrieval-delivery.md)。
 
-```bash
-# 1. 克隆
-git clone <your-repo-url>
+重排使用现有 DeepSeek，会增加调用费用和等待时间；设置 `retrieval.rerank=false` 可关闭。最终三组对照中，完整问答 P95 增幅约24.5%–29.7%，只代表本轮小样本与网络条件。
+
+## 快速开始
+
+本轮改进发布在 `reconcile-latest` 分支，尚未合入 `main`。按本文体验该版本时克隆此分支：
+
+```powershell
+git clone --branch reconcile-latest https://github.com/WENDAOfan/notebook-clone.git
 cd notebook-clone
-
-# 2. 建库
-psql -U postgres -c "CREATE DATABASE notebook_clone;"
-
-# 3. 复制配置模板并填入你的密钥与密码
-cp src/main/resources/application.properties.example src/main/resources/application.properties
-
-# 4. 运行
-./mvnw spring-boot:run
-# Windows: mvnw.cmd spring-boot:run
-
-# 5. 访问
-# 浏览器打开 http://localhost:8080
 ```
 
-数据库表由 Hibernate `ddl-auto=update` 自动创建，无需手写 SQL。
+### Electron 桌面端
 
-### ⚙️ 配置说明
+需要 Node.js 与 npm；CI 使用 Node.js 20 执行离线测试。
 
-关键配置项见 `application.properties.example`：
-
-| 配置项 | 说明 | 环境变量（可选） |
-| :--- | :--- | :--- |
-| `spring.datasource.password` | PostgreSQL 密码 | `DB_PASSWORD` |
-| `jwt.secret` | JWT 签名密钥（≥256 bit，务必修改） | `JWT_SECRET` |
-| `spring.ai.openai.api-key` | DeepSeek API Key | `DEEPSEEK_API_KEY` |
-| `spring.ai.zhipuai.api-key` | 智谱 AI API Key | `ZHIPU_API_KEY` |
-
-> ⚠️ **安全提醒**：真实 `application.properties` 已被 `.gitignore` 忽略，切勿提交真实密钥。密钥也可通过环境变量注入，避免写入文件。
-
-### 📂 项目结构
-
-```
-src/main/java/com/example/notebook_clone/
-├── NotebookCloneApplication.java        启动类（@EnableAsync/@EnableRetry/@EnableScheduling）
-├── common/        Result<T>, GlobalExceptionHandler
-├── config/        AsyncConfig, SecurityConfig, VectorStoreConfig
-├── controller/    Auth, Notebook, Document, TestAi, ChunkTest, Test, User, Hello
-├── dto/           AskRequest
-├── entity/        User, Notebook, Document, ChatMessage
-├── filter/        JwtAuthenticationFilter
-├── repository/    4 个 JpaRepository
-├── service/       AiChat, AiSummary, AsyncSummary, AuthService, ChatHistory,
-│                  ContextCompression, DocumentChunk, DocumentExtract
-└── util/          JwtUtil
-src/main/resources/
-├── application.properties.example       配置模板
-└── static/                              原生前端
-    ├── index.html
-    ├── css/style.css
-    └── js/app.js
+```powershell
+cd notebook-electron
+npm ci
+npm start
 ```
 
-### 📖 API 文档
+首次启动后，在“系统状态 → AI 配置”查看配置路径，填写 DeepSeek 与智谱密钥，再重启应用。配置、数据位置、可选解析服务及打包命令见 [桌面端说明](notebook-electron/README.md)。
 
-<details>
-<summary>点击展开核心业务 API</summary>
+### Spring Boot Web 端
 
-**统一响应**：`{ "code": int, "message": String, "data": T }`，成功 `code=200`。
-**认证**：除注册、登录接口外，业务接口均需在请求头携带 `Authorization: Bearer <token>`。
+在**克隆后的仓库根目录**进入其 Java 子目录（目录名同样叫 `notebook-clone`），按 [Web 端说明](notebook-clone/README.md) 配置数据库与模型：
 
-**认证 Auth**
-
-| 方法 | 路径 | 功能 |
-| :--- | :--- | :--- |
-| POST | `/api/auth/register` | 注册（BCrypt 加密） |
-| POST | `/api/auth/login` | 登录，返回 JWT |
-| GET | `/api/auth/me` | 获取当前登录用户 |
-
-**笔记本 Notebook**
-
-| 方法 | 路径 | 功能 |
-| :--- | :--- | :--- |
-| GET | `/api/notebooks` | 列出当前用户的笔记本 |
-| POST | `/api/notebooks` | 创建笔记本 |
-| PUT | `/api/notebooks/{id}` | 改名 / 改描述 |
-| DELETE | `/api/notebooks/{id}` | 删除（级联清历史与文档） |
-| POST | `/api/notebooks/{id}/ask` | 笔记本级问答（同步） |
-| GET | `/api/notebooks/{id}/ask/stream` | 笔记本级流式问答（SSE） |
-| GET | `/api/notebooks/{id}/chat/history` | 查询对话历史 |
-| DELETE | `/api/notebooks/{id}/chat/history` | 清空对话历史 |
-
-**文档 Document**
-
-| 方法 | 路径 | 功能 |
-| :--- | :--- | :--- |
-| POST | `/api/documents?notebookId=` | 新建文本文档 |
-| GET | `/api/documents/notebook/{notebookId}` | 列出笔记本下的文档 |
-| POST | `/api/documents/upload` | multipart 上传（`notebookId`、`file`、`additionalContent`） |
-| GET | `/api/documents/{id}` | 文档详情（含 summary） |
-| DELETE | `/api/documents/{id}` | 删除（清向量分块与历史） |
-| POST | `/api/documents/{id}/summary` | 生成 / 重生成 AI 摘要 |
-| POST | `/api/documents/{id}/ask` | 单文档问答（同步） |
-| GET | `/api/documents/{id}/ask/stream` | 单文档流式问答（SSE） |
-| GET | `/api/documents/{id}/chat/history` | 查询对话历史 |
-| DELETE | `/api/documents/{id}/chat/history` | 清空对话历史 |
-
-</details>
-
-### 🗺 开发路线
-
-基于 32 天学习计划。
-
-- ✅ **第一阶段 数据基石**（Day 1-10）：数据模型、CRUD、文件上传、Lombok、统一返回 `Result<T>`、全局异常
-- ✅ **第二阶段 安全与多用户**（Day 11-17）：User 实体、Spring Security、JWT、数据隔离
-- ✅ **第三阶段 AI 灵魂**（Day 18-26）：DeepSeek 接入、文档摘要、智能问答、SSE 流式、引用溯源、`@Async` 异步、重试机制
-- ✅ **第四阶段 RAG 与上下文**（Day 27-30）：PDF/DOCX 解析、文本清洗、分块向量化、RAG 检索、多轮对话与上下文压缩
-- 📝 **Day 31**：README 与 API 文档（当前）
-- ⏳ **Day 32**：整体测试与 Bug 修复，打 v1.0.0 Tag
-
-### 📄 协议
-
-MIT，详见 [LICENSE](./LICENSE)。
-
----
-
-## English
-
-### ✨ Features
-
-- JWT auth & per-user data isolation
-- Notebook/document CRUD with file upload (`.txt` / `.md` / `.docx` / `.pdf`)
-- Text cleaning (control chars, watermark lines >40% spaces, duplicate lines ≥3)
-- Async AI summary (`@Async` + `@Retryable` + `@Recover` fallback)
-- Single-doc & notebook-level Q&A with RAG
-- SSE streaming "typewriter" output
-- Citation tracing (`[N]` source markers)
-- Vector retrieval: token chunking (512 + overlap 50) + Zhipu embedding + SimpleVectorStore file persistence
-- Multi-turn dialog with context compression (300K token budget, keep latest 200 messages)
-- Token usage stats
-- Vanilla front-end: draggable 3-column layout, hash routing, markdown rendering
-
-### 🛠 Tech Stack
-
-Spring Boot 3.4.2 · Java 21 · Spring AI 1.0.0 · PostgreSQL · Spring Data JPA · Spring Security / JWT (jjwt 0.12.3) · DeepSeek (chat) · Zhipu AI (embedding) · Apache PDFBox 3.0.1 · Apache POI 5.2.5 · Spring Retry · vanilla HTML/CSS/JS + marked.js 12.
-
-### 🚀 Quick Start
-
-Prerequisites: JDK 21+, Maven 3.9+, PostgreSQL 14+, DeepSeek & Zhipu API keys.
-
-```bash
-git clone <your-repo-url>
+```powershell
 cd notebook-clone
-psql -U postgres -c "CREATE DATABASE notebook_clone;"
-cp src/main/resources/application.properties.example src/main/resources/application.properties
-# edit the file to fill in your keys (or use env vars)
-./mvnw spring-boot:run      # Windows: mvnw.cmd
-# open http://localhost:8080
+# 完成该目录 README 中的数据库与配置步骤后运行
+.\mvnw.cmd spring-boot:run
 ```
 
-Tables are auto-created by Hibernate `ddl-auto=update`.
+两段启动命令是二选一的入口，不要在 Electron 目录内直接接着执行 Java 命令。本次桌面检索指标不代表 Web 端评测结果。
 
-### ⚙️ Configuration
+## 测试与持续集成
 
-See `application.properties.example`. Keys can be injected via environment variables to avoid writing them to disk: `DEEPSEEK_API_KEY`, `ZHIPU_API_KEY`, `DB_PASSWORD`, `JWT_SECRET`. The real `application.properties` is git-ignored — never commit secrets.
+桌面离线测试：
 
-### 📂 Project Structure
+```powershell
+cd notebook-electron
+npm test
+```
 
-Java 21 + Spring Boot under `src/main/java/com/example/notebook_clone` (packages: `common`, `config`, `controller`, `dto`, `entity`, `filter`, `repository`, `service`, `util`). Front-end in `src/main/resources/static` (`index.html`, `css/style.css`, `js/app.js`).
+2026-10-03 的本地完整回归为158通过、0失败、3个在线测试默认跳过。默认离线测试不调用真实模型，不访问个人知识库。
 
-### 📖 API Reference
+[GitHub Actions](.github/workflows/ci.yml) 在 push 与 pull request 时分别执行 Java、Electron 和 Python 离线测试。CI 通过说明这些自动化检查通过，不能替代真实模型的回答质量验收。在线检索／问答评测需显式命令，会消耗模型额度，见 [评测入口](notebook-electron/eval/README.md)。
 
-Core business endpoints cover Auth, Notebook, and Document operations. Responses use `{code, message, data}` (success `code=200`). Business endpoints require `Authorization: Bearer <token>` except registration and login. See the Chinese section above for the full table, or explore `src/main/java/.../controller`.
+## 数据与仓库边界
 
-### 🗺 Roadmap
+源码开发模式及可识别工作区内的桌面构建，把配置、SQLite、向量文件与会话缓存放在仓库根目录 `.local-data/notebook-electron/`。工作区外安装版可设置绝对路径 `NOTEBOOK_DATA_DIR`，否则使用 Electron 默认用户目录。Windows 临时文件不受此约定完全控制。
 
-A 32-day learning plan (each "Day" ≈ 1 focused hour, not a calendar day).
+真实密钥、个人数据库、向量文件、生成的 PDF/DOCX 样本、在线明细报告与构建产物不提交 Git。固定题目、生成脚本和测试代码保留；个人数据需单独备份。
 
-- ✅ Phase 1 — Data foundation (Day 1-10): models, CRUD, upload, Lombok, `Result<T>`, global exception handler
-- ✅ Phase 2 — Auth & multi-tenancy (Day 11-17): User, Spring Security, JWT, data isolation
-- ✅ Phase 3 — AI soul (Day 18-26): DeepSeek, summary, Q&A, SSE, citations, `@Async`, retry
-- ✅ Phase 4 — RAG & context (Day 27-30): PDF/DOCX parsing, chunking + embedding, RAG retrieval, multi-turn dialog
-- 📝 Day 31 — README & API docs (this)
-- ⏳ Day 32 — Testing & v1.0.0 tag
+## English overview
 
-### 📄 License
+Notebook Clone contains two separate applications: a Spring Boot web app and an Electron desktop app. Start with the [desktop guide](notebook-electron/README.md) or the [web guide](notebook-clone/README.md).
 
-MIT — see [LICENSE](./LICENSE).
+The desktop pipeline combines vector search, BM25 and RRF with entity-aware soft ranking, bounded sentence-context restoration and optional model reranking. Configured desktop sessions enable reranking by default, with at most one attempt per question and an eight-second fallback timeout. Local storage does not mean local-only model processing.
+
+Evaluation results above are from controlled synthetic corpora, not official RGB scores or a general accuracy guarantee. See the [evaluation guide](notebook-electron/eval/README.md) and [delivery report](notebook-electron/docs/retrieval-delivery.md) for definitions, reproduction commands and limitations.
+
+## License
+
+MIT，见 [LICENSE](LICENSE)。
