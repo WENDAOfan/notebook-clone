@@ -15,6 +15,8 @@ let notebook;
 const documents = new Map();
 
 test.before(async () => {
+  // Exercise the candidate production path, including readiness and isolation.
+  retrievalService.configure({ thresholds: { ...retrievalService.DEFAULT_POLICY, ranking: 'lexical' } });
   await db.init(':memory:');
   notebook = await db.createNotebook('公开测试知识库', '仅包含虚构资料');
   const fixtures = [
@@ -47,6 +49,7 @@ test.before(async () => {
 });
 
 test.after(async () => {
+  retrievalService.configure({ thresholds: retrievalService.DEFAULT_POLICY });
   await db.close();
   fs.rmSync(tempDirectory, { recursive: true, force: true });
 });
@@ -149,4 +152,24 @@ test('模型或内容哈希不匹配的 ready 索引不可检索', async () => {
   await db.updateDocumentIndexStatus(doc.id, 'ready', { contentHash: 'wrong' });
   const result = await retrievalService.retrieve({ scopeType: 'document', scopeId: doc.id, query: '电池', queryEmbedding: [0,1,0,0] });
   assert.deepEqual(result.sources, []);
+});
+
+test('生产检索只从当前有效文档补齐句子，来源保留区间并遵守预算', async () => {
+  const content = '例行记录。墨池厂净化设备正常使用故障免费维修20个月；进水损坏不适用。记录结束。';
+  const fragment = '设备正常使用故障免费维修20个月；进水';
+  const doc = await db.createDocument(notebook.id, '墨池厂设备', content);
+  const contentHash = crypto.createHash('sha256').update(content).digest('hex');
+  await db.updateDocumentIndexStatus(doc.id, 'ready', { contentHash });
+  await vectorStore.add([{ id: 'boundary-chunk', text: fragment, embedding: [1,0,0,0],
+    metadata: { documentId: doc.id, documentTitle: doc.title, contentHash, embeddingModel: 'embedding-3' } }]);
+  const options = { scopeType: 'document', scopeId: doc.id, query: '净化设备维修', queryEmbedding: [1,0,0,0] };
+  const result = await retrievalService.retrieve(options);
+  assert.equal(result.sources.length, 1);
+  assert.equal(result.sources[0].snippet, '墨池厂净化设备正常使用故障免费维修20个月；进水损坏不适用。');
+  assert.equal(result.sources[0].chunkId, 'boundary-chunk');
+  assert.equal(result.sources[0].contextWindow.status, 'expanded');
+  assert.equal(result.diagnostics.candidates[0].text, fragment);
+  assert.deepEqual((await retrievalService.retrieve({ ...options, tokenBudget: 10 })).sources, []);
+  await db.markDocumentIndexStale(doc.id);
+  assert.deepEqual((await retrievalService.retrieve(options)).sources, []);
 });

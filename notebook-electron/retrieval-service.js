@@ -2,12 +2,19 @@ const { getEncoding } = require('js-tiktoken');
 const db = require('./database');
 const vectorStore = require('./vector-store');
 const crypto = require('node:crypto');
+const { rankCandidates } = require('./retrieval-ranking');
+const reranker = require('./retrieval-reranker');
+const { restoreSentenceContext } = require('./retrieval-context');
 
 const DEFAULT_TOKEN_BUDGET = 8000;
 const SEARCH_DEPTH = 30;
 const RRF_K = 60;
 const SIMILARITY_THRESHOLD = 0.35;
-let policy = { similarityThreshold: SIMILARITY_THRESHOLD, keywordThreshold: 1, minimumKeywordMatches: 2, searchDepth: SEARCH_DEPTH, exactIdentifiers: true };
+const DEFAULT_POLICY = Object.freeze({ similarityThreshold: SIMILARITY_THRESHOLD, keywordThreshold: 1,
+  minimumKeywordMatches: 2, searchDepth: SEARCH_DEPTH, exactIdentifiers: true,
+  ranking: 'lexical', phraseWeight: 0.6, identifierWeight: 0.02, maxChunks: 8,
+  balancedPhrases: true, overlapPenalty: 0.1, sentenceContext: true, rerank: false });
+let policy = { ...DEFAULT_POLICY };
 let embeddingProvider = null;
 let modelProvider = () => 'embedding-3';
 
@@ -37,6 +44,7 @@ async function retrieve({
   history = [],
   tokenBudget = DEFAULT_TOKEN_BUDGET,
   queryEmbedding = null,
+  allowRerank = true,
   signal = null
 }) {
   const started = Date.now();
@@ -108,9 +116,27 @@ async function retrieve({
     || result.keywordScore >= policy.keywordThreshold
     || (result.keywordScore > 0 && result.keywordMatches >= policy.minimumKeywordMatches)
   );
-  const filtered = policy.exactIdentifiers ? preferIdentifiers(relevant, retrievalQuery) : relevant;
-  const selected = selectWithinBudget(filtered, {
+  const ranking = policy.ranking === 'lexical'
+    ? rankCandidates(relevant, retrievalQuery, documents.filter(doc => valid.has(Number(doc.id))), policy) : null;
+  let filtered = ranking ? ranking.ranked
+    : policy.exactIdentifiers ? preferIdentifiers(relevant, retrievalQuery) : relevant;
+  const readyDocuments = new Map(documents.filter(doc => valid.has(Number(doc.id))).map(doc => [Number(doc.id), doc]));
+  if (ranking && policy.sentenceContext) {
+    filtered = filtered.map(chunk => restoreSentenceContext(chunk, readyDocuments.get(Number(chunk.metadata?.documentId))));
+  }
+  let rerankDiagnostics = null;
+  if (policy.rerank && allowRerank) {
+    const reranked = await reranker.rerank(filtered, retrievalQuery, { signal });
+    filtered = reranked.ranked;
+    rerankDiagnostics = reranked.diagnostics;
+    if (rerankDiagnostics.status === 'fallback') warnings.push(`相关性重排未完成，已退回基础排序：${rerankDiagnostics.reason}`);
+  } else if (policy.rerank) {
+    rerankDiagnostics = { status: 'skipped', reason: 'question_rerank_budget', elapsedMs: 0 };
+  }
+  const contextual = filtered;
+  const selected = selectWithinBudget(contextual, {
     tokenBudget,
+    maxChunks: ranking ? policy.maxChunks : Number.POSITIVE_INFINITY,
     maxPerDocument: scopeType === 'notebook' ? 3 : Number.POSITIVE_INFINITY
   });
 
@@ -121,10 +147,13 @@ async function retrieve({
     documentTitle: chunk.metadata.documentTitle || '未知文档',
     chunkIndex: chunk.metadata.chunkIndex ?? null,
     snippet: chunk.text,
+    ...(chunk.contextWindow ? { contextWindow: chunk.contextWindow } : {}),
     scores: {
       vector: chunk.vectorScore,
       bm25: chunk.keywordScore,
-      rrf: chunk.rrfScore
+      rrf: chunk.rrfScore,
+      ...(ranking ? { ranking: chunk.rankingScore, selection: chunk.selectionScore,
+        phrase: chunk.phraseScore, identifier: chunk.identifierScore } : {})
     }
   }));
   const chunks = selected.map((chunk, index) => ({
@@ -149,9 +178,20 @@ async function retrieve({
       tokenBudget,
       elapsedMs: Date.now() - started,
       policy: { ...policy },
+      ...(rerankDiagnostics ? { reranker: rerankDiagnostics } : {}),
+      ...(ranking ? { queryPhrases: ranking.phrases, queryIdentifiers: ranking.identifiers } : {}),
+      contextWindows: contextual.filter(chunk => chunk.contextWindow).map(chunk => ({ chunkId: chunk.id, ...chunk.contextWindow })),
       candidates: fused.map(chunk => ({ chunkId: chunk.id, text: chunk.text, documentId: chunk.metadata.documentId,
         vector: chunk.vectorScore, bm25: chunk.keywordScore, keywordMatches: chunk.keywordMatches, rrf: chunk.rrfScore,
-        decision: selected.includes(chunk) ? 'selected' : filtered.includes(chunk) ? 'budget_or_duplicate_or_document_cap' : 'below_threshold' })),
+        ...(ranking ? { ranking: ranking.ranked.find(item => item.id === chunk.id)?.rankingScore,
+          phraseMatches: ranking.ranked.find(item => item.id === chunk.id)?.phraseMatches,
+          semanticPromotion: ranking.ranked.find(item => item.id === chunk.id)?.semanticPromotion,
+          selectionScore: ranking.ranked.find(item => item.id === chunk.id)?.selectionScore,
+          overlapDemotion: ranking.ranked.find(item => item.id === chunk.id)?.overlapDemotion,
+          identifierMatches: ranking.ranked.find(item => item.id === chunk.id)?.identifierMatches } : {}),
+        decision: selected.some(item => item.id === chunk.id) ? 'selected'
+          : filtered.some(item => item.id === chunk.id) ? 'budget_or_duplicate_or_document_or_result_cap'
+          : relevant.includes(chunk) ? 'identifier_filter' : 'below_threshold' })),
       warnings
     }
   };
@@ -201,13 +241,14 @@ function fuseResults(vectorResults, keywordResults) {
   );
 }
 
-function selectWithinBudget(candidates, { tokenBudget, maxPerDocument }) {
+function selectWithinBudget(candidates, { tokenBudget, maxPerDocument, maxChunks = Number.POSITIVE_INFINITY }) {
   const encoding = getEncoding('cl100k_base');
   const selected = [];
   const perDocument = new Map();
   let usedTokens = 0;
 
   for (const candidate of candidates) {
+    if (selected.length >= maxChunks) break;
     const documentId = Number(candidate.metadata?.documentId);
     const count = perDocument.get(documentId) || 0;
     if (count >= maxPerDocument) continue;
@@ -241,6 +282,7 @@ function normalizeForDuplicate(text) {
 }
 
 module.exports = {
+  DEFAULT_POLICY,
   preferIdentifiers,
   configure,
   retrieve,

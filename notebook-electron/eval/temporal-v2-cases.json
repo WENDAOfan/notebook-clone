@@ -1,0 +1,76 @@
+{
+  "id": "temporal-v2",
+  "description": "修订前冻结的新留出题：缺少结果记录不等于确定未举办",
+  "documents": [
+    {
+      "id": "bochuan-plan",
+      "title": "泊川产品发布会预告",
+      "text": "泊川产品发布会原定于2025年11月1日在环汀厅举行，预告预计展示三款设备。"
+    },
+    {
+      "id": "bochuan-delay",
+      "title": "泊川产品发布会延期通知",
+      "text": "2025年10月28日，主办方宣布泊川产品发布会延期，新的举办时间另行通知。本资料库没有此后的活动记录。"
+    },
+    {
+      "id": "wuying-plan",
+      "title": "梧影奖颁奖礼日程",
+      "text": "梧影奖颁奖礼计划于2025年12月7日在青鹭剧场举行，日程表安排了下午四点的入场环节。"
+    },
+    {
+      "id": "wuying-registration",
+      "title": "梧影奖报名结束通知",
+      "text": "2025年11月20日，梧影奖报名结束，工作人员完成报名资料整理。此通知没有记载颁奖礼的执行结果。"
+    },
+    {
+      "id": "yuanshan-plan",
+      "title": "远杉工作坊初始安排",
+      "text": "远杉工作坊最初计划于2025年3月2日举办，地点为石泉馆。"
+    },
+    {
+      "id": "yuanshan-done",
+      "title": "远杉工作坊活动总结",
+      "text": "远杉工作坊实际于2025年3月9日在石泉馆举行。会后总结记录了当天展示的两项原型和参加者签名。"
+    },
+    {
+      "id": "jinyu-plan",
+      "title": "锦屿音乐会通知",
+      "text": "锦屿音乐会原计划于2025年5月5日在海松广场举行。"
+    },
+    {
+      "id": "jinyu-cancel",
+      "title": "锦屿音乐会取消公告",
+      "text": "主办方于2025年4月30日明确宣布取消本届锦屿音乐会，本届活动不再举办。"
+    }
+  ],
+  "questions": [
+    {
+      "id": "v2-delay-unknown",
+      "split": "holdout",
+      "query": "泊川产品发布会后来到底办了没有？现在能确定什么？",
+      "expected": "只能确定原定11月1日、随后延期；没有后续记录，不能确定后来是否举办。",
+      "evidenceDocumentIds": ["bochuan-plan", "bochuan-delay"]
+    },
+    {
+      "id": "v2-no-outcome",
+      "split": "holdout",
+      "query": "梧影奖颁奖礼已按计划在12月7日举行了吗？",
+      "expected": "只能确定计划12月7日；报名结束并不证明颁奖礼举行，不能确认实际结果。",
+      "evidenceDocumentIds": ["wuying-plan", "wuying-registration"]
+    },
+    {
+      "id": "v2-actual-after-plan",
+      "split": "holdout",
+      "query": "远杉工作坊原计划与实际举办日期分别是哪天？",
+      "expected": "原定2025年3月2日，实际于3月9日举办。",
+      "evidenceDocumentIds": ["yuanshan-plan", "yuanshan-done"]
+    },
+    {
+      "id": "v2-explicit-cancel",
+      "split": "holdout",
+      "query": "本届锦屿音乐会有没有举办？原定哪天？",
+      "expected": "原定2025年5月5日，后来明确取消，本届未举办。",
+      "evidenceDocumentIds": ["jinyu-plan", "jinyu-cancel"]
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "id": "temporal-v3",
+  "description": "修订前冻结的附属活动时态留出题，不含明确的未举办提示",
+  "documents": [
+    {
+      "id": "canglan-plan",
+      "title": "苍岚联赛开赛预告",
+      "text": "2025赛季苍岚联赛揭幕战将于2025年6月8日在松港体育场进行，由苍岚A队对阵滨禾队，赛前还举行半小时开幕式。"
+    },
+    {
+      "id": "qingyan-plan",
+      "title": "青檐航展计划",
+      "text": "青檐航展将于2025年7月19日在北坪园开幕。开幕当天还安排十五分钟无人机表演，主办方正在招募志愿者。"
+    },
+    {
+      "id": "zhouqiao-done",
+      "title": "舟桥大会会后记载",
+      "text": "舟桥大会已于2025年6月10日在五溪厅召开，当天的开幕式也已经举行。会后纪要记录了两项投票结果。"
+    },
+    {
+      "id": "mangzhou-plan",
+      "title": "芒洲资格考试日程",
+      "text": "芒洲资格考试笔试将于2025年8月1日举办，面试将于2025年8月10日举办。两个环节均属考试日程预告。"
+    },
+    {
+      "id": "chenghai-plan",
+      "title": "澄海运动会原定安排",
+      "text": "澄海运动会原计划于2025年9月1日开幕，主办方同时计划举办入场仪式。"
+    },
+    {
+      "id": "chenghai-done",
+      "title": "澄海运动会活动总结",
+      "text": "澄海运动会实际于2025年9月3日开幕。总结写有当天的签到和比赛情况，但未提入场仪式是否举行。"
+    }
+  ],
+  "questions": [
+    {
+      "id": "v3-opening-date",
+      "split": "holdout",
+      "query": "苍岚联赛2025赛季开赛时间是什么时候？",
+      "expected": "资料只说揭幕战计划于2025年6月8日，不能说已进行，也不能把赛前开幕式说成已举行。",
+      "evidenceDocumentIds": ["canglan-plan"]
+    },
+    {
+      "id": "v3-side-show",
+      "split": "holdout",
+      "query": "青檐航展的无人机表演已经举行了吗？",
+      "expected": "资料只说计划在2025年7月19日开幕当天安排表演，不能确认实际举行。",
+      "evidenceDocumentIds": ["qingyan-plan"]
+    },
+    {
+      "id": "v3-real-ceremony",
+      "split": "holdout",
+      "query": "舟桥大会的开幕式是哪天举行的？",
+      "expected": "2025年6月10日，资料明确记载已举行。",
+      "evidenceDocumentIds": ["zhouqiao-done"]
+    },
+    {
+      "id": "v3-only-asked-date",
+      "split": "holdout",
+      "query": "芒洲资格考试的笔试是什么时候？",
+      "expected": "资料仅预告笔试将于2025年8月1日举办，不要把面试说成已举办。",
+      "evidenceDocumentIds": ["mangzhou-plan"]
+    },
+    {
+      "id": "v3-plan-versus-actual",
+      "split": "holdout",
+      "query": "澄海运动会原计划和实际开幕日期各是哪天？入场仪式也举行了吗？",
+      "expected": "原计划2025年9月1日，实际9月3日开幕；没有入场仪式实际举行的记录。",
+      "evidenceDocumentIds": ["chenghai-plan", "chenghai-done"]
+    }
+  ]
+}

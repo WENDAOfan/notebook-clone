@@ -24,6 +24,8 @@ const ragService = require('./rag-service');
 const { invalidateCorruptIndexes } = require('./embedding-client');
 const extractor = require('./extractor');
 const configService = require('./config-service');
+const retrievalService = require('./retrieval-service');
+const { applicationPolicy } = require('./retrieval-runtime-policy');
 const agentService = require('./agent-service');
 const researchService = require('./research-service');
 const graphService = require('./graph-service');
@@ -61,10 +63,11 @@ app.whenReady().then(async () => {
   const vectorStorePath = path.join(app.getPath('userData'), 'vector-store.json');
   
   try {
-    configService.init({
+    const aiStatus = configService.init({
       userDataPath: app.getPath('userData'),
       isPackaged: app.isPackaged
     });
+    retrievalService.configure({ thresholds: applicationPolicy(configService.getConfig(), aiStatus) });
     await db.init(dbPath);
     vectorStore.init(vectorStorePath);
     const notebooks = await db.getAllNotebooks();

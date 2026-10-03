@@ -2,6 +2,8 @@ const crypto = require('node:crypto');
 
 const DATASET_SHA256 = '6691483d440c931ed7d00120d419361fafe61bf35fc29e89adc37e999a56504d';
 const SAMPLE_IDS = [254, 161, 127];
+const REVIEWED_20_IDS = [161, 127, 101, 58, 126, 111, 153, 242, 251, 135, 205, 12, 247, 136, 221, 4, 67, 105, 86, 117];
+const REVIEWED_20_EXCLUDED_IDS = [254, 268, 229, 201, 53, 248, 265];
 const SAMPLE_SEED = 'rgb-mini-v1:';
 
 function sha256(value) {
@@ -29,14 +31,26 @@ function eligible(row) {
     && row.negative.slice(0, 4).every(text => typeof text === 'string' && !text.includes(answer));
 }
 
-function selectSamples(rows) {
-  const selected = rows.filter(eligible).sort((left, right) =>
+function selectSamples(rows, sampleSet = 'mini3') {
+  const ranked = rows.filter(eligible).sort((left, right) =>
     sha256(`${SAMPLE_SEED}${left.id}`).localeCompare(sha256(`${SAMPLE_SEED}${right.id}`))
-  ).slice(0, SAMPLE_IDS.length);
-  if (selected.length !== SAMPLE_IDS.length || selected.some((item, index) => item.id !== SAMPLE_IDS[index])) {
-    throw new Error(`RGB 样本选择与固定清单不符；预期 ${SAMPLE_IDS.join(', ')}`);
+  );
+  if (sampleSet === 'mini3') {
+    const selected = ranked.slice(0, SAMPLE_IDS.length);
+    if (selected.length !== SAMPLE_IDS.length || selected.some((item, index) => item.id !== SAMPLE_IDS[index])) {
+      throw new Error(`RGB 样本选择与固定清单不符；预期 ${SAMPLE_IDS.join(', ')}`);
+    }
+    return selected;
   }
-  return selected;
+  if (sampleSet === 'reviewed20') {
+    const candidates = ranked.slice(0, REVIEWED_20_IDS.length + REVIEWED_20_EXCLUDED_IDS.length);
+    const selected = candidates.filter(item => !REVIEWED_20_EXCLUDED_IDS.includes(item.id));
+    if (selected.length !== REVIEWED_20_IDS.length || selected.some((item, index) => item.id !== REVIEWED_20_IDS[index])) {
+      throw new Error(`RGB 20 题选择与固定清单不符；预期 ${REVIEWED_20_IDS.join(', ')}`);
+    }
+    return selected;
+  }
+  throw new Error(`未知 RGB 样本集：${sampleSet}`);
 }
 
 function makeVariants(row) {
@@ -67,9 +81,10 @@ function assess(caseData, result, positiveDocumentId) {
     hasCitation: citations.length > 0,
     citationIdsValid: citations.every(id => known.has(id)),
     refusalHeuristic: caseData.type === 'no_answer'
-      ? /未找到|无法找到|没有|未提供|缺少|无法确定|不能确定|无相关|不包含|无法回答|没有提到|未提及/.test(answer)
+      ? /未找到|无法找到|没有|未提供|未给出|未载明|缺少|无法确定|不能确定|无法确认|无法据此确认|无相关|不包含|无法回答|没有提到|未提及/.test(answer)
         && !caseData.expectedAnswers.some(value => typeof value === 'string' && answer.includes(value)) : null
   };
 }
 
-module.exports = { DATASET_SHA256, SAMPLE_IDS, sha256, parseJsonl, eligible, selectSamples, makeVariants, assess };
+module.exports = { DATASET_SHA256, SAMPLE_IDS, REVIEWED_20_IDS, REVIEWED_20_EXCLUDED_IDS,
+  sha256, parseJsonl, eligible, selectSamples, makeVariants, assess };

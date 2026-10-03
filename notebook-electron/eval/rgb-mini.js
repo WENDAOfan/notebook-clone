@@ -3,33 +3,56 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { DATASET_SHA256, SAMPLE_IDS, sha256, parseJsonl, selectSamples, makeVariants, assess } = require('./rgb-mini-lib');
+const { DATASET_SHA256, sha256, parseJsonl, selectSamples, makeVariants, assess } = require('./rgb-mini-lib');
 
 const UPSTREAM_COMMIT = '65ec39e40e7dc9abb50e9bf1b4f32be3f6f16615';
-const REPORT_PATH = path.join(__dirname, 'rgb-mini-report.json');
 
 function parseArgs(argv) {
-  const options = { online: false, rgbRoot: null, configPath: null };
+  const options = { online: false, rgbRoot: null, configPath: null, sampleSet: 'mini3', startOriginal: 0, countOriginal: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === '--prepare') continue;
     if (argv[i] === '--online') { options.online = true; continue; }
     if (argv[i] === '--rgb-root' && argv[i + 1]) { options.rgbRoot = path.resolve(argv[++i]); continue; }
     if (argv[i] === '--config' && argv[i + 1]) { options.configPath = path.resolve(argv[++i]); continue; }
+    if (argv[i] === '--sample-set' && argv[i + 1]) { options.sampleSet = argv[++i]; continue; }
+    if (argv[i] === '--start-original' && argv[i + 1]) { options.startOriginal = Number(argv[++i]); continue; }
+    if (argv[i] === '--count-original' && argv[i + 1]) { options.countOriginal = Number(argv[++i]); continue; }
     throw new Error(`未知或不完整参数：${argv[i]}`);
   }
   if (!options.rgbRoot) throw new Error('请传入 --rgb-root <RGB 官方仓库目录>');
+  if (!['mini3', 'reviewed20'].includes(options.sampleSet)) throw new Error(`未知样本集：${options.sampleSet}`);
+  if (!Number.isInteger(options.startOriginal) || options.startOriginal < 0
+      || (options.countOriginal !== null && (!Number.isInteger(options.countOriginal) || options.countOriginal < 1))) {
+    throw new Error('样本起点必须为非负整数，题数必须为正整数');
+  }
   return options;
 }
 
-function loadCases(rgbRoot) {
-  const file = path.join(rgbRoot, 'data', 'zh_refine.json');
+function loadCases(options) {
+  const file = path.join(options.rgbRoot, 'data', 'zh_refine.json');
   const bytes = fs.readFileSync(file);
   const hash = sha256(bytes);
   if (hash !== DATASET_SHA256) throw new Error(`RGB 文件版本不匹配：zh_refine.json SHA-256=${hash}`);
   const rows = parseJsonl(bytes.toString('utf8'));
   if (rows.length !== 300) throw new Error(`RGB 中文修订集应有 300 条，实际 ${rows.length} 条`);
-  const samples = selectSamples(rows);
+  const selected = selectSamples(rows, options.sampleSet);
+  const end = options.countOriginal === null ? selected.length : options.startOriginal + options.countOriginal;
+  if (options.startOriginal >= selected.length || end > selected.length) {
+    throw new Error(`样本范围超出 ${options.sampleSet} 的 ${selected.length} 条原题`);
+  }
+  const samples = selected.slice(options.startOriginal, end);
   return samples.flatMap(makeVariants);
+}
+
+function reportPath(options, cases) {
+  if (options.sampleSet === 'mini3' && options.startOriginal === 0 && options.countOriginal === null) {
+    return path.join(__dirname, 'rgb-mini-report.json');
+  }
+  if (options.sampleSet === 'reviewed20' && options.startOriginal === 0 && options.countOriginal === null) {
+    return path.join(__dirname, 'rgb-20-report.json');
+  }
+  const last = options.startOriginal + cases.length / 2;
+  return path.join(__dirname, `rgb-${options.sampleSet}-${options.startOriginal + 1}-${last}-report.json`);
 }
 
 function findConfigPath(explicit) {
@@ -57,10 +80,13 @@ async function runOnline(cases, options) {
   const db = require('../database');
   const vectors = require('../vector-store');
   const rag = require('../rag-service');
+  const REPORT_PATH = reportPath(options, cases);
+  const sampleIds = [...new Set(cases.map(item => item.datasetId))];
   const report = {
     status: 'RUNNING', startedAt: new Date().toISOString(),
-    dataset: { repository: 'chen700564/RGB', commit: UPSTREAM_COMMIT, file: 'data/zh_refine.json', sha256: DATASET_SHA256, sampleIds: SAMPLE_IDS },
-    protocol: 'RGB-derived Electron end-to-end mini test; not an official RGB score',
+    dataset: { repository: 'chen700564/RGB', commit: UPSTREAM_COMMIT, file: 'data/zh_refine.json', sha256: DATASET_SHA256,
+      sampleSet: options.sampleSet, startOriginal: options.startOriginal, sampleIds },
+    protocol: 'RGB-derived Electron end-to-end sample test; not an official RGB score',
     codeHash: crypto.createHash('sha256')
       .update(fs.readFileSync(path.join(__dirname, '../rag-service.js')))
       .update(fs.readFileSync(path.join(__dirname, '../retrieval-service.js')))
@@ -152,10 +178,11 @@ async function runOnline(cases, options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const cases = loadCases(options.rgbRoot);
+  const cases = loadCases(options);
   if (!options.online) {
     console.log(JSON.stringify({ status: 'PREPARED_ONLY', datasetSha256: DATASET_SHA256,
-      sampleIds: SAMPLE_IDS, cases: cases.map(item => ({ id: item.id, documentCount: item.documents.length })) }, null, 2));
+      sampleIds: [...new Set(cases.map(item => item.datasetId))],
+      cases: cases.map(item => ({ id: item.id, documentCount: item.documents.length })) }, null, 2));
     return;
   }
   await runOnline(cases, options);

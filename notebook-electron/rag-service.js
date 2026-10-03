@@ -7,6 +7,7 @@ const configService = require('./config-service');
 const db = require('./database');
 const vectorStore = require('./vector-store');
 const retrievalService = require('./retrieval-service');
+const { summarizeUsage: summarizeRerankUsage } = require('./retrieval-reranker');
 
 let deepseekClient = null;
 let zhipuClient = null;
@@ -39,13 +40,42 @@ function splitTextIntoChunks(text, chunkSize = 512, chunkOverlap = 100) {
   const enc = getEncoding('cl100k_base');
   const chunks = [];
   const overlap = Math.min(Math.max(chunkOverlap, 0), Math.max(chunkSize - 1, 0));
+  const hasOriginalReplacement = text.includes('\uFFFD');
   let current = [];
 
   const flush = () => {
     if (!current.length) return;
-    const value = enc.decode(current).trim();
+    // A tiktoken token may contain only part of a UTF-8 character. Do not emit
+    // such a boundary, and do not start the overlap in the middle of a character.
+    let cut = current.length;
+    let decoded = enc.decode(current);
+    if (!hasOriginalReplacement) {
+      while (cut > 0 && decoded.endsWith('\uFFFD')) {
+        cut -= 1;
+        decoded = enc.decode(current.slice(0, cut));
+      }
+      if (!cut) throw new Error('chunkSize 太小，无法容纳完整的 UTF-8 字符');
+    }
+    const value = decoded.trim();
     if (value) chunks.push(value);
-    current = current.slice(Math.max(0, current.length - overlap));
+    const minimumStart = Math.max(0, current.length - chunkSize + 1);
+    let start = Math.max(0, cut - overlap, minimumStart);
+    if (!hasOriginalReplacement) {
+      // Prefer one extra overlap token to retain the complete first character;
+      // near a full-size overlap, move forward instead so the next flush advances.
+      let boundary = start;
+      while (boundary > minimumStart
+          && enc.decode(current.slice(boundary, cut)).startsWith('\uFFFD')) {
+        boundary -= 1;
+      }
+      if (enc.decode(current.slice(boundary, cut)).startsWith('\uFFFD')) {
+        while (boundary < cut && enc.decode(current.slice(boundary, cut)).startsWith('\uFFFD')) {
+          boundary += 1;
+        }
+      }
+      start = boundary;
+    }
+    current = current.slice(start);
   };
 
   const appendTokens = tokens => {
@@ -536,6 +566,7 @@ async function handleAskStream(event, payload) {
     const allSources = [];
     const retrievalDiagnostics = { rounds: [], warnings: [], compressionMs: Date.now() - startedAt };
     let searches = 0;
+    let rerankCalls = 0;
     let evidenceTokens = 0;
     const encoding = getEncoding('cl100k_base');
 
@@ -688,12 +719,14 @@ async function handleAskStream(event, payload) {
             query: searchQuery,
             history: historyMessages,
             tokenBudget: 8000 - evidenceTokens,
+            allowRerank: rerankCalls < 1,
             signal: controller.signal
           }), controller.signal);
+          if (retrieval.diagnostics.reranker && retrieval.diagnostics.reranker.status !== 'skipped') rerankCalls++;
           retrievalDiagnostics.rounds.push(retrieval.diagnostics);
           retrievalDiagnostics.warnings = [...new Set([...retrievalDiagnostics.warnings, ...retrieval.diagnostics.warnings])];
 
-          // 新文档尚未完成索引时，单文档问答安全兜底读取原文
+          // 只消费有效索引检索出的证据，未就绪或空检索不回退正文。
           const chunksToUse = retrieval.chunks;
 
           const formattedChunks = [];
@@ -715,6 +748,7 @@ async function handleAskStream(event, payload) {
                 documentTitle: chunk.metadata?.documentTitle || chunk.documentTitle || '未知文档',
                 chunkIndex: chunk.metadata?.chunkIndex ?? chunk.chunkIndex ?? null,
                 snippet: chunk.text || chunk.snippet,
+                ...(chunk.contextWindow ? { contextWindow: chunk.contextWindow } : {}),
                 scores: chunk.scores || {
                   vector: chunk.vectorScore ?? null,
                   bm25: chunk.keywordScore ?? null,
@@ -758,11 +792,16 @@ async function handleAskStream(event, payload) {
     const enc = getEncoding('cl100k_base');
     const promptTokens = estimatedPromptTokens;
     const completionTokens = enc.encode(fullAnswer).length;
+    const rerankUsage = summarizeRerankUsage(retrievalDiagnostics.rounds);
     const usage = {
-      prompt: promptTokens,
-      completion: completionTokens,
-      total: promptTokens + completionTokens,
-      estimated: true
+      prompt: promptTokens + rerankUsage.prompt,
+      completion: completionTokens + rerankUsage.completion,
+      total: promptTokens + completionTokens + rerankUsage.total,
+      estimated: true,
+      incomplete: rerankUsage.unknownCalls > 0,
+      scope: 'answer_and_rerank_excludes_embedding',
+      answer: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens, estimated: true },
+      rerank: rerankUsage
     };
     await db.saveChatMessage(sessionId, 'assistant', fullAnswer, docId, nbId, {
       sources: allSources,

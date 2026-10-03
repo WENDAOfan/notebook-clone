@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseJsonl, eligible, makeVariants, assess } = require('../eval/rgb-mini-lib');
+const { parseJsonl, eligible, selectSamples, REVIEWED_20_IDS, REVIEWED_20_EXCLUDED_IDS,
+  makeVariants, assess } = require('../eval/rgb-mini-lib');
 
 function record() {
   return {
@@ -38,6 +39,15 @@ test('RGB mini rejects a negative passage containing the expected answer', () =>
   assert.throws(() => makeVariants(row));
 });
 
+test('RGB reviewed set fixes 20 unique cases and keeps rejected evidence labels outside the set', () => {
+  assert.equal(REVIEWED_20_IDS.length, 20);
+  assert.equal(new Set(REVIEWED_20_IDS).size, 20);
+  assert.equal(REVIEWED_20_EXCLUDED_IDS.length, 7);
+  assert.ok(REVIEWED_20_EXCLUDED_IDS.every(id => !REVIEWED_20_IDS.includes(id)));
+  assert.throws(() => selectSamples([], 'unknown'), /未知 RGB 样本集/);
+  assert.throws(() => selectSamples([record()], 'reviewed20'), /固定清单不符/);
+});
+
 test('RGB automatic checks separate answer text, retrieved evidence and citation number', () => {
   const [answerable, noAnswer] = makeVariants(record());
   const result = { answer: '获奖人是测试人物[1]。', sources: [{ citationId: 1, documentId: 42 }] };
@@ -53,4 +63,7 @@ test('RGB automatic checks separate answer text, retrieved evidence and citation
   const refusal = assess(noAnswer, { answer: '资料未提供获奖人，无法确定。', sources: [] }, null);
   assert.equal(refusal.refusalHeuristic, true);
   assert.equal(refusal.expectedStringPresent, null);
+  const alternateRefusal = assess(noAnswer,
+    { answer: '文档未给出具体日期，无法据此确认。', sources: [] }, null);
+  assert.equal(alternateRefusal.refusalHeuristic, true);
 });

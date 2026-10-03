@@ -3,6 +3,7 @@ const path = require('path');
 const mammoth = require('mammoth');
 const configService = require('./config-service');
 const { cleanText } = require('./text-cleaner');
+const { extractLocalPdf } = require('./pdf-local-parser');
 
 // ==================== 文本清洗工具函数 ====================
 
@@ -211,12 +212,7 @@ async function extractText(filePath) {
       try {
         // @llamaindex/liteparse 是 ESM 包，需用动态 import() 加载
         const { LiteParse } = await import('@llamaindex/liteparse');
-        const parser = new LiteParse({ ocrLanguage: 'chi_sim' });
-        const result = await parser.parse(filePath);
-        rawText = result.markdown || result.text || '';
-        if (!rawText || rawText.trim().length === 0) {
-          throw new Error('PDF文本提取为空，无法用于问答');
-        }
+        rawText = await extractLocalPdf(filePath, LiteParse);
       } catch (e) {
         throw new Error(`PDF解析失败: ${e.message}`);
       }

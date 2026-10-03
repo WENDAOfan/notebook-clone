@@ -92,6 +92,19 @@ test('创建整理稿工具始终需要审批', async () => {
   assert.equal(await createTool.needsApproval(), true);
 });
 
+test('整理 Agent 不继承问答专用的付费重排调用', async t => {
+  const retrieval = require('../retrieval-service');
+  let received;
+  t.mock.method(retrieval, 'retrieve', async options => {
+    received = options;
+    return { sources: [], diagnostics: {} };
+  });
+  const search = agentService.createTools().find(tool => tool.name === 'search_notebook');
+  await search.invoke(new RunContext(createAgentContext()), JSON.stringify({ query: '测试资料' }));
+  assert.equal(received.allowRerank, false);
+  assert.equal(received.scopeId, notebook.id);
+});
+
 test('批准后的创建工具只新增 Agent 整理稿并保留来源', async () => {
   const createTool = agentService.createTools().find(tool => tool.name === 'create_organization_draft');
   const context = new RunContext({

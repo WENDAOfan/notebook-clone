@@ -9,6 +9,9 @@
     "baseURL": "https://open.bigmodel.cn/api/paas/v4/",
     "model": "embedding-3"
   },
+  "retrieval": {
+    "rerank": true
+  },
   "llamaParse": {
     "apiKey": "YOUR_LLAMAPARSE_API_KEY",
     "baseURL": "https://api.cloud.llamaindex.ai/api/parsing",
