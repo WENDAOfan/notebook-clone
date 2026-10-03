@@ -77,7 +77,7 @@ cd notebook-electron
 npm test
 ```
 
-2026-10-03 的本地完整回归为158通过、0失败、3个在线测试默认跳过。默认离线测试不调用真实模型，不访问个人知识库。
+2026-10-03 修正PDF测试的本地文件依赖后，在不含生成样本和个人配置的干净源码副本中完整回归：160通过、0失败、3个在线测试默认跳过。默认离线测试不调用真实模型，不访问个人知识库。
 
 [GitHub Actions](.github/workflows/ci.yml) 在 push 与 pull request 时分别执行 Java、Electron 和 Python 离线测试。CI 通过说明这些自动化检查通过，不能替代真实模型的回答质量验收。在线检索／问答评测需显式命令，会消耗模型额度，见 [评测入口](notebook-electron/eval/README.md)。
 

@@ -15,7 +15,7 @@ const SUITES = { temporal: 'temporal-cases.json', 'temporal-v2': 'temporal-v2-ca
 const sha256 = value => crypto.createHash('sha256').update(value).digest('hex');
 const normalized = value => value.replace(/\s/g, '');
 
-function loadSuite(name) {
+function loadSuite(name, { fixtureDirectory = path.join(__dirname, 'fixtures') } = {}) {
   const file = SUITES[name];
   if (!file) throw new Error(`未知评测集：${name}`);
   const fullPath = path.join(__dirname, file);
@@ -31,7 +31,7 @@ function loadSuite(name) {
     if (data.parserMode !== 'local-pdf' || !/^[a-z0-9-]+\.pdf$/.test(document.fixtureFile)) {
       throw new Error(`评测集 ${name} 的 PDF 路径无效`);
     }
-    const fixturePath = path.join(__dirname, 'fixtures', document.fixtureFile);
+    const fixturePath = path.join(fixtureDirectory, document.fixtureFile);
     if (!fs.existsSync(fixturePath)) throw new Error(`缺少 PDF 评测样本：${document.fixtureFile}`);
     fixtureHashes.push({ file: document.fixtureFile, sha256: sha256(fs.readFileSync(fixturePath)) });
   }

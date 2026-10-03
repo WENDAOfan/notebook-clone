@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const crypto = require('node:crypto');
 const { loadSuite, parseArgs, selectedQuestions, rankSources, rankEvidence } = require('../eval/production-cases');
 const { splitTextIntoChunks } = require('../rag-service');
 
@@ -66,14 +70,36 @@ test('长文按实际证据片段而非同文档中的无关片段计名次', ()
   { acceptance: 2 });
 });
 
-test('本地 PDF 题集固定样本哈希并区分 OCR 字间空格', () => {
-  const { data, fixtureHashes, sha256 } = loadSuite('pdf-local');
+test('PDF 题集哈希测试只读取临时字节样本，不依赖本地生成 PDF', t => {
+  const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'notebook-fixture-hash-'));
+  t.after(() => fs.rmSync(fixtureDirectory, { recursive: true, force: true }));
+  const definition = require('../eval/pdf-local-cases');
+  // This tests byte hashing, not PDF parsing or OCR. Real PDFs belong to the
+  // explicitly run parser evaluation and must not be required by offline CI.
+  const expectedHashes = definition.documents.map(document => {
+    const bytes = Buffer.from(`synthetic hash-only fixture: ${document.fixtureFile}\n`);
+    fs.writeFileSync(path.join(fixtureDirectory, document.fixtureFile), bytes);
+    return { file: document.fixtureFile, sha256: crypto.createHash('sha256').update(bytes).digest('hex') };
+  });
+  const { data, fixtureHashes, sha256 } = loadSuite('pdf-local', { fixtureDirectory });
   assert.equal(data.id, 'pdf-local-v1');
   assert.equal(data.documents.length, 3);
   assert.equal(data.questions.length, 6);
   assert.equal(fixtureHashes.length, 3);
-  assert.ok(fixtureHashes.every(item => /^[a-f0-9]{64}$/.test(item.sha256)));
-  assert.equal(sha256.length, 64);
+  assert.deepEqual(fixtureHashes, expectedHashes);
+  assert.equal(sha256, crypto.createHash('sha256').update(JSON.stringify({ data, fixtureHashes })).digest('hex'));
+  assert.equal(loadSuite('pdf-local', { fixtureDirectory }).sha256, sha256);
+  fs.appendFileSync(path.join(fixtureDirectory, definition.documents[0].fixtureFile), 'changed');
+  assert.notEqual(loadSuite('pdf-local', { fixtureDirectory }).sha256, sha256);
+});
+
+test('PDF 真实评测所需样本缺失时仍明确失败，不静默绕过', t => {
+  const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'notebook-fixture-missing-'));
+  t.after(() => fs.rmSync(fixtureDirectory, { recursive: true, force: true }));
+  assert.throws(() => loadSuite('pdf-local', { fixtureDirectory }), /缺少 PDF 评测样本：mixed-text-scan\.pdf/);
+});
+
+test('PDF 证据比对按标注区分 OCR 字间空格', () => {
   const ids = new Map([['scan-zh', 9]]);
   assert.deepEqual(rankEvidence([{ documentId: 9, snippet: '星 桥 X9 整 机 保修期 为 15 个 月 。' }],
     [{ id: 'x9', documentId: 'scan-zh', contains: '星桥X9整机保修期为15个月。', normalizeWhitespace: true }], ids),
@@ -82,7 +108,6 @@ test('本地 PDF 题集固定样本哈希并区分 OCR 字间空格', () => {
 
 test('已有非 PDF 题集哈希保持旧口径，历史在线报告可复核', () => {
   const { data, fixtureHashes, sha256: actual } = loadSuite('dense-near');
-  const crypto = require('node:crypto');
   const expected = crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
   assert.deepEqual(fixtureHashes, []);
   assert.equal(actual, expected);
