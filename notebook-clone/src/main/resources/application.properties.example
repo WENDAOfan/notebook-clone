@@ -35,5 +35,8 @@ spring.ai.zhipuai.api-key=${ZHIPU_API_KEY:your-zhipu-key}
 spring.ai.zhipuai.embedding.options.model=embedding-3
 
 # ---------- 向量存储 ----------
-# SimpleVectorStore 文件持久化路径（运行时生成，已 git-ignore）
-vector.store.file=vector-store.json
+# pgvector 与业务表使用同一 PostgreSQL 数据源；必须先安装 vector 扩展
+vector.store.dimensions=2048
+vector.store.initialize-schema=true
+# 可选：一次性导入旧 SimpleVectorStore 文件，成功后移除此配置；无需再次 Embedding
+# vector.store.import-file=D:/JetBrains/notebookproject/vector-store.json

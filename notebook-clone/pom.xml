@@ -127,7 +127,7 @@
 		<!-- ===== Day 28 新增：向量存储 ===== -->
 		<dependency>
 			<groupId>org.springframework.ai</groupId>
-			<artifactId>spring-ai-vector-store</artifactId>
+			<artifactId>spring-ai-pgvector-store</artifactId>
 		</dependency>
 		<!-- ===== Day 28 新增：智谱 AI Embedding ===== -->
 		<dependency>
