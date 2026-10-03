@@ -55,6 +55,10 @@ function createTools() {
           scopeType: 'notebook',
           scopeId: context.notebookId,
           query,
+          // Semantic reranking is budgeted by the Q&A loop only. The organizer
+          // retains local retrieval; enabling the desktop policy must not add
+          // unaccounted model calls to its separate tool/approval lifecycle.
+          allowRerank: false,
           tokenBudget: 8000
         });
         for (const source of result.sources) {

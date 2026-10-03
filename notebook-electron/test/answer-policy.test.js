@@ -32,3 +32,16 @@ test('新事实边界集正反例成对，不修改前轮验收题', () => {
   assert.equal(cases.filter(c => c.id.endsWith('positive')).length, 6);
   assert.equal(cases.filter(c => c.id.endsWith('negative')).length, 6);
 });
+test('时间状态规则区分预告与已发生，同时允许已发生的证据', () => {
+  assert.match(ANSWER_GROUNDING_POLICY, /计划.*预计.*将于/);
+  assert.match(ANSWER_GROUNDING_POLICY, /不能仅凭当前日期推断实际发生/);
+  assert.match(ANSWER_GROUNDING_POLICY, /原文明确记载已发生时则正常回答/);
+  assert.match(ANSWER_GROUNDING_POLICY, /没有后续记录.*不等于事件确定未发生/);
+  assert.match(ANSWER_GROUNDING_POLICY, /只有明确写出.*才能断言未举办/);
+  assert.match(ANSWER_GROUNDING_POLICY, /附属安排同样只是计划/);
+  assert.match(ANSWER_GROUNDING_POLICY, /若只问日期.*不主动添加无关的附属安排/);
+  assert.match(ANSWER_GROUNDING_POLICY, /区分“记录状态”与“实际状态”/);
+  assert.match(ANSWER_GROUNDING_POLICY, /没有完成交接记录.*不能断言现场实际/);
+  assert.match(ANSWER_GROUNDING_POLICY, /现场核查明确写“未实施”.*才可说截至该日未完成/);
+  assert.match(ANSWER_GROUNDING_POLICY, /完成交接单.*正常说已完成/);
+});

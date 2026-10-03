@@ -2,6 +2,16 @@
 
 智谱 Embedding 必须显式请求 float 格式并校验响应，见 [embedding-encoding-fix.md](docs/embedding-encoding-fix.md)。
 
+检索改进遵循 [retrieval-ranking-v2.md](docs/retrieval-ranking-v2.md)：先冻结新题，使用旧题校准完整短语与型号的软排序；保留语义候选、范围隔离和预算，按相同向量的生产检索对照验证后再启用。
+
+后续本地相关性实验见该文末计划：只在现有合格候选上比较短句中的信息词覆盖，不增加网络调用，不读取黄金答案；先离线重放全部固定报告，若改善及无退步成立，再在线核验。实验不得覆盖已有失败报告，不凭关键词分数宣布事实正确。
+
+长文排序补充：标题开头的明确主体匹配不按资料数量偏置；同文档首尾重叠只能单向软降序后续片段，不能反向降低完整前文或删除同文档独立证据。诊断记录原始排名分、选择分及重叠降序。库和离线测试默认不重排；桌面DeepSeek就绪时启用经确认的紧凑重排，显式 retrieval.rerank=false 可关闭。按0–3分组返回有序编号，每个候选恰好一次，保持原文不变。旧冗长协议长文问答P95曾增加41.5%而未通过；紧凑协议复测增幅24.5%，boundary为29.6%，全新132块资料为27.8%，原失败保留。失败、非法结果或8秒超时退回基础排序，用户取消向上终止。证据级倒数排名与标准按题 MRR 分开报告，多证据题先审计理论上限，不篡改原分数或门槛。完整启用依据见最终交付记录。
+
+句边界上下文补全：仅对已经通过范围、索引和相关性检查的候选，从同一有效文档中唯一精确匹配的位置补齐被切断的首尾句。单侧查找最多256字符，合计新增最多128 token；扩展后正文和来源包装仍计入单次问答累计8000 token。匹配缺失或歧义时保持原片段并记录原因，不读全文兜底、不跨文档、不修改索引。保留原chunk ID和原始排名，并另记原文区间；评测同时记录原块证据名次和实际提供的补全证据名次，不能将补全收益冒充排序模型提升。
+
+可选语义重排即使启用，每个问答也最多尝试一次；后续检索继续使用基础排序，失败尝试同样消耗预算。问答模型仍最多四次请求，排序为单独受限的可选一次请求。重排用量单独记录，供应商缺失或失败用量为未知，合计仍标估算且明确不含 Embedding；不得把排序调用漏算后宣称计费精确。
+
 回答事实边界遵循 [rag-answer-grounding.md](docs/rag-answer-grounding.md)：拒绝沿用问题中的未证实前提，同时保留明确承诺的正常回答能力。
 
 桌面 RAG 正确性与真实验收按 [desktop-rag-reliability.md](docs/desktop-rag-reliability.md) 执行；离线通过不等于真实效果验收通过。
@@ -9,6 +19,10 @@
 源码仓库的提交范围与可再生评测资料见 [source-publish-scope.md](docs/source-publish-scope.md)。固定题目定义随评测程序提交；由生成脚本产生的 TXT/MD/DOCX/PDF 样本、在线运行报告和面试架构图保留本地，不进入源码提交。默认离线测试不得依赖被忽略的生成文件；固定题目核对不应要求可选的 DOCX/PDF 生成依赖。
 
 离线 CI 的检出目录与各项目工作目录必须一致，见 [ci-checkout-path-fix.md](docs/ci-checkout-path-fix.md)。同一仓库只检出一次；Spring、Python、Electron 分别从仓库根目录下对应的子目录运行，不能为 Spring/Python 再次把整个仓库检出到 `notebook-clone/`。
+
+中文外部数据初测只走 Electron 的生产索引、检索和问答路径，见 [rgb-mini-eval.md](docs/rgb-mini-eval.md)。RGB 原始数据不复制进仓库；固定版本、样本选择规则、模型配置来源和逐题证据记录必须可复核。此测试是 RGB 改编的端到端小样本实验，不等同官方 RGB 分数，也不涉及 Java。
+
+桌面端用户数据迁移按 [local-storage-migration.md](docs/local-storage-migration.md) 执行：当前工作区内统一使用仓库根目录的 `.local-data/notebook-electron`，同时在 Electron `ready` 前设置 `userData` 与 `sessionData`；先复制并校验旧数据，旧目录暂留作为回退。该目录必须被 Git 忽略，不能进入发行包。
 
 本手册详细规范了从原 Java Web 版项目移植至 **Node.js + Electron + SQLite3** 桌面端的代码逻辑、数据传输、接口定义以及业务实现方式，以便后续的任务推进和维护。
 
@@ -72,7 +86,7 @@ graph TD
 ---
 
 ### 2.2 本地 SQLite3 数据库设计 (`database.js`)
-数据库存储于 Electron 的用户数据保存路径下（Windows 下为 `%APPDATA%/Roaming/notebook-electron/` 目录），确保程序更新不丢失数据。
+数据库存储于 Electron 的 `userData` 路径下。当前开发工作区及其 `dist/` 内构建把该路径指向仓库根目录 `.local-data/notebook-electron/`；工作区外的安装版可通过绝对路径 `NOTEBOOK_DATA_DIR` 指定位置，否则沿用 Electron 默认目录。向量、配置及 `sessionData` 也使用相同目录，详见 [迁移设计](docs/local-storage-migration.md)。
 
 #### A. 建表规范与外键关联：
 ```sql

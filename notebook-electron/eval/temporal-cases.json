@@ -1,0 +1,124 @@
+{
+  "id": "temporal-v1",
+  "description": "虚构中文资料：区分计划、取消、延期和实际举行",
+  "documents": [
+    {
+      "id": "senyu-plan",
+      "title": "森屿创客节预告",
+      "text": "2025年8月1日发布的活动预告：森屿创客节将于2025年10月18日在沐河馆举行，主办方拟安排上午九点的开幕式。本文只是一份活动预告，没有记录活动最终是否举行。"
+    },
+    {
+      "id": "beilan-done",
+      "title": "北岚论坛活动回顾",
+      "text": "北岚论坛已于2025年4月4日在澄桥中心举行。会后纪要记录了当天的三场圆桌讨论和现场签到情况。"
+    },
+    {
+      "id": "qihu-plan",
+      "title": "栖湖开放日原安排",
+      "text": "2025年3月10日的安排通知：栖湖开放日原计划于2025年5月1日在南洲园举办。报名通道当日开放。"
+    },
+    {
+      "id": "qihu-cancel",
+      "title": "栖湖开放日取消通知",
+      "text": "2025年4月20日，主办方宣布取消栖湖开放日。活动没有按原计划举办，也没有确定新的举办日期。"
+    },
+    {
+      "id": "lanting-old",
+      "title": "蓝庭设计周最初日程",
+      "text": "蓝庭设计周最初公布的日程安排为2025年6月8日开幕，地点为青墨展厅。"
+    },
+    {
+      "id": "lanting-new",
+      "title": "蓝庭设计周调整通知",
+      "text": "2025年5月25日，主办方将蓝庭设计周的计划开幕日期调整为2025年6月15日。通知没有记录设计周后来是否实际开幕。"
+    },
+    {
+      "id": "yinshan-plan",
+      "title": "银杉研究会原定日期",
+      "text": "银杉研究会原计划于2025年8月12日在云池会堂举行。这份早期日程后来被更新。"
+    },
+    {
+      "id": "yinshan-done",
+      "title": "银杉研究会会后记录",
+      "text": "银杉研究会实际于2025年8月13日在云池会堂召开。会后记录列出了当日参加讨论的三个研究小组。"
+    },
+    {
+      "id": "heyan-plan",
+      "title": "禾岸发布会最初预告",
+      "text": "禾岸发布会曾计划于2025年9月1日举行。预告中写明拟展示新款设备，但没有会后记录。"
+    },
+    {
+      "id": "heyan-delay",
+      "title": "禾岸发布会延期通知",
+      "text": "2025年8月28日，禾岸发布会宣布无限期延期，主办方尚未公布新的日期。本通知没有说发布会已经召开。"
+    },
+    {
+      "id": "hupo-plan",
+      "title": "琥珀展开放计划",
+      "text": "琥珀展预计于2026年2月20日在砚塔展馆开幕。资料仅包含这一份开幕计划，没有签到、展后总结或取消通知。"
+    },
+    {
+      "id": "fangzhou-done",
+      "title": "方舟研讨会纪要",
+      "text": "方舟研讨会已于2025年10月9日在临川学舍举行。会议纪要记载了当天的签到人数和两项表决结果。"
+    }
+  ],
+  "questions": [
+    {
+      "id": "cal-plan",
+      "split": "calibration",
+      "query": "森屿创客节是在什么时候举办的？",
+      "expected": "只能说计划于2025年10月18日，不能确认已经举办。",
+      "evidenceDocumentIds": ["senyu-plan"]
+    },
+    {
+      "id": "cal-done",
+      "split": "calibration",
+      "query": "北岚论坛在什么时候举行？",
+      "expected": "已于2025年4月4日举行。",
+      "evidenceDocumentIds": ["beilan-done"]
+    },
+    {
+      "id": "cal-cancel",
+      "split": "calibration",
+      "query": "栖湖开放日原定哪天举行，后来有没有办？",
+      "expected": "原定2025年5月1日；后来取消，没有举办。",
+      "evidenceDocumentIds": ["qihu-plan", "qihu-cancel"]
+    },
+    {
+      "id": "cal-update",
+      "split": "calibration",
+      "query": "蓝庭设计周原定和调整后的开幕日期各是什么时候？能确定实际开幕了吗？",
+      "expected": "原定2025年6月8日，后调整计划为6月15日；不能确定实际开幕。",
+      "evidenceDocumentIds": ["lanting-old", "lanting-new"]
+    },
+    {
+      "id": "holdout-done-after-plan",
+      "split": "holdout",
+      "query": "银杉研究会原计划哪天举行，实际上是哪天召开的？",
+      "expected": "原计划2025年8月12日，实际于8月13日召开。",
+      "evidenceDocumentIds": ["yinshan-plan", "yinshan-done"]
+    },
+    {
+      "id": "holdout-delay",
+      "split": "holdout",
+      "query": "禾岸发布会现在定在什么时候？已经举办了吗？",
+      "expected": "原计划2025年9月1日，但后来无限期延期；没有证据证明已举办。",
+      "evidenceDocumentIds": ["heyan-plan", "heyan-delay"]
+    },
+    {
+      "id": "holdout-old-plan",
+      "split": "holdout",
+      "query": "琥珀展是不是已经按计划开幕了，具体哪天开幕？",
+      "expected": "资料只说预计2026年2月20日开幕；不能确认实际开幕。",
+      "evidenceDocumentIds": ["hupo-plan"]
+    },
+    {
+      "id": "holdout-actual",
+      "split": "holdout",
+      "query": "方舟研讨会什么时候举行的？",
+      "expected": "已于2025年10月9日举行。",
+      "evidenceDocumentIds": ["fangzhou-done"]
+    }
+  ]
+}

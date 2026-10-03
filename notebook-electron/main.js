@@ -2,6 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const dns = require('dns');
+const { configureStoragePaths } = require('./storage-path');
+
+// Must run before Electron's ready event so Chromium cache and app data share the selected path.
+configureStoragePaths(app, {
+  appDirectory: __dirname,
+  executablePath: process.execPath,
+  isPackaged: app.isPackaged,
+  defaultUserData: app.getPath('userData')
+});
 
 // 强制 Node.js 优先解析 IPv4 地址，规避本地网络环境下 IPv6 不通造成的 fetch failed 问题
 if (typeof dns.setDefaultResultOrder === 'function') {
@@ -15,6 +24,8 @@ const ragService = require('./rag-service');
 const { invalidateCorruptIndexes } = require('./embedding-client');
 const extractor = require('./extractor');
 const configService = require('./config-service');
+const retrievalService = require('./retrieval-service');
+const { applicationPolicy } = require('./retrieval-runtime-policy');
 const agentService = require('./agent-service');
 const researchService = require('./research-service');
 const graphService = require('./graph-service');
@@ -52,10 +63,11 @@ app.whenReady().then(async () => {
   const vectorStorePath = path.join(app.getPath('userData'), 'vector-store.json');
   
   try {
-    configService.init({
+    const aiStatus = configService.init({
       userDataPath: app.getPath('userData'),
       isPackaged: app.isPackaged
     });
+    retrievalService.configure({ thresholds: applicationPolicy(configService.getConfig(), aiStatus) });
     await db.init(dbPath);
     vectorStore.init(vectorStorePath);
     const notebooks = await db.getAllNotebooks();

@@ -90,3 +90,21 @@ test('180秒超时明确报错且不会保存成功', async t => {
   assert.match(events[0].message, /180/);
   t.mock.timers.reset();
 });
+
+test('每个问题最多一次重排尝试，后续检索继续执行并明确未知用量', async () => {
+  const original = retrieval.retrieve;
+  const allowed = [];
+  retrieval.retrieve = async options => {
+    allowed.push(options.allowRerank);
+    return { chunks: [], diagnostics: { warnings: [], reranker: options.allowRerank
+      ? { status: 'fallback', usage: null } : { status: 'skipped', reason: 'question_rerank_budget' } } };
+  };
+  try {
+    const { events } = await run([call(), call(), call(), { content: '未找到证据。' }]);
+    assert.deepEqual(allowed, [true, false, false]);
+    const usage = events.find(e => e.channel === 'chat:token-usage').usage;
+    assert.equal(usage.rerank.calls, 1);
+    assert.equal(usage.rerank.unknownCalls, 1);
+    assert.equal(usage.incomplete, true);
+  } finally { retrieval.retrieve = original; }
+});
