@@ -2,17 +2,14 @@ package com.example.notebook_clone.config;
 
 import org.springframework.ai.document.MetadataMode;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.vectorstore.SimpleVectorStore;
-import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.pgvector.PgVectorStore;
 import org.springframework.ai.zhipuai.ZhiPuAiEmbeddingModel;
 import org.springframework.ai.zhipuai.ZhiPuAiEmbeddingOptions;
 import org.springframework.ai.zhipuai.api.ZhiPuAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import lombok.extern.slf4j.Slf4j;
-
-import java.io.File;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * Day 28：向量存储配置
@@ -21,10 +18,8 @@ import java.io.File;
  *   - Chat 模型继续用 DeepSeek（spring.ai.openai.*）
  *   - Embedding 模型用智谱 AI（spring.ai.zhipuai.*）
  *
- * SimpleVectorStore 是内存向量存储，加文件持久化兜住重启丢失（过渡方案）。
- * 后续接入 pgvector 后可删除文件持久化逻辑。
+ * 向量、分块正文及元数据保存到 PostgreSQL 的 pgvector 表。
  */
-@Slf4j
 @Configuration
 public class VectorStoreConfig {
 
@@ -34,9 +29,11 @@ public class VectorStoreConfig {
     @Value("${spring.ai.zhipuai.embedding.options.model:embedding-3}")
     private String model;
 
-    // 向量文件持久化路径（项目根目录下的 vector-store.json）
-    @Value("${vector.store.file:vector-store.json}")
-    private String vectorStoreFile;
+    @Value("${vector.store.dimensions:2048}")
+    private int dimensions;
+
+    @Value("${vector.store.initialize-schema:true}")
+    private boolean initializeSchema;
 
     /**
      * 创建智谱 AI Embedding 模型
@@ -51,21 +48,19 @@ public class VectorStoreConfig {
     }
 
     /**
-     * 创建内存向量存储 + 文件持久化
-     * 启动时从文件加载已有向量（如果文件存在），分块后保存到文件
+     * 与 JPA 共用数据源。保留 doc:<id>:chunk:<index> 文本 ID，兼容定向删除。
+     * embedding-3 的现有向量为 2048 维，超过 vector 的 HNSW 2000 维限制，
+     * 因此使用精确余弦检索；不通过裁剪维度改变已有向量。
      */
     @Bean
-    public VectorStore vectorStore(EmbeddingModel embeddingModel) {
-        SimpleVectorStore store = SimpleVectorStore.builder(embeddingModel).build();
-
-        File file = new File(vectorStoreFile);
-        if (file.exists()) {
-            store.load(file);
-            log.info("[向量存储] 从文件加载向量: {}", file.getAbsolutePath());
-        } else {
-            log.info("[向量存储] 向量文件不存在，从空库启动: {}", file.getAbsolutePath());
-        }
-
-        return store;
+    public PgVectorStore vectorStore(JdbcTemplate jdbcTemplate, EmbeddingModel embeddingModel) {
+        return PgVectorStore.builder(jdbcTemplate, embeddingModel)
+                .vectorTableName("vector_store")
+                .idType(PgVectorStore.PgIdType.TEXT)
+                .dimensions(dimensions)
+                .distanceType(PgVectorStore.PgDistanceType.COSINE_DISTANCE)
+                .indexType(PgVectorStore.PgIndexType.NONE)
+                .initializeSchema(initializeSchema)
+                .build();
     }
 }

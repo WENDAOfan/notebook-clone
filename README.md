@@ -11,6 +11,14 @@
 | 桌面 RAG 评测 | 生产链路对照、固定题集、证据召回与回答核对 | [评测说明](notebook-electron/eval/README.md) |
 | Python RAG-Eval-Lab | 独立评测工具与离线测试 | [Python README](notebook-clone/rag-eval-lab/README.md) |
 
+## Web 端向量存储
+
+Java 版通过 Spring AI `PgVectorStore` 把文档分块正文、元数据和2048维向量保存到 PostgreSQL 的 `vector_store` 表，与业务表共用数据源；按文档元数据限制检索范围。当前使用精确余弦检索，未启用 HNSW/IVFFlat，也不以此次接入宣称性能提升。
+
+启动前需安装与数据库版本匹配的 pgvector 并启用 `vector`、`hstore` 扩展。旧 `SimpleVectorStore` JSON 可通过显式迁移参数导入，复用已有向量、不重新调用 Embedding、不覆盖现有记录；正常启动不会自动导入旧文件。见 [pgvector 安装、迁移及验证说明](notebook-clone/docs/pgvector.md)。
+
+本机2026-10-01曾通过3项真实数据库测试和1项真实Embedding测试；这不是每次CI都会重跑的在线验证。相关测试须显式开启，默认离线测试不需要个人配置或外部数据库。Electron仍使用本地JSON向量存储，不因Java接入pgvector而改变。
+
 ## 桌面端当前能力
 
 - 支持 TXT、Markdown、PDF、DOCX 导入，保存笔记本、文档与聊天历史。
@@ -89,7 +97,7 @@ npm test
 
 ## English overview
 
-Notebook Clone contains two separate applications: a Spring Boot web app and an Electron desktop app. Start with the [desktop guide](notebook-electron/README.md) or the [web guide](notebook-clone/README.md).
+Notebook Clone contains two separate applications: a Spring Boot web app and an Electron desktop app. Start with the [desktop guide](notebook-electron/README.md) or the [web guide](notebook-clone/README.md). The Java app uses PostgreSQL/pgvector for 2048-dimensional exact cosine retrieval; the desktop app retains its local JSON vector store. See [pgvector setup and migration](notebook-clone/docs/pgvector.md).
 
 The desktop pipeline combines vector search, BM25 and RRF with entity-aware soft ranking, bounded sentence-context restoration and optional model reranking. Configured desktop sessions enable reranking by default, with at most one attempt per question and an eight-second fallback timeout. Local storage does not mean local-only model processing.
 

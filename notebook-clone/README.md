@@ -19,7 +19,7 @@
 - 💬 单文档 / 笔记本级 AI 问答（RAG 检索增强）
 - 🌊 SSE 流式"打字机"输出
 - 🔖 引用溯源：回答标注来源段落 `[N]`
-- 🧠 向量检索：Token 分块（512 + 重叠 50）+ 智谱 Embedding + SimpleVectorStore 文件持久化
+- 🧠 向量检索：Token 分块 + 智谱 Embedding + PostgreSQL/pgvector 持久化与余弦检索
 - 🔁 多轮对话：上下文压缩（300K token 预算，保留最近 200 轮完整消息）
 - 📊 Token 用量统计与展示
 - 🖥 原生前端：三栏可拖拽布局 + Hash 路由 + Markdown 渲染
@@ -29,7 +29,7 @@
 | 层 | 选型 |
 | :--- | :--- |
 | 后端 | Spring Boot 3.4.2 · Java 21 · Spring AI 1.0.0 |
-| 持久化 | PostgreSQL · Spring Data JPA · Hibernate |
+| 持久化 | PostgreSQL · pgvector · Spring Data JPA · Hibernate |
 | 安全 | Spring Security · JWT (jjwt 0.12.3) · BCrypt |
 | AI | DeepSeek（Chat）· 智谱 AI（Embedding）· Spring AI |
 | 文档解析 | Apache PDFBox 3.0.1 · Apache POI 5.2.5 |
@@ -38,15 +38,16 @@
 
 ### 🚀 快速开始
 
-**前置条件**：JDK 21+、Maven 3.9+、PostgreSQL 14+、DeepSeek API Key、智谱 AI API Key。
+**前置条件**：JDK 21+、Maven 3.9+、PostgreSQL 14+（已安装 pgvector 扩展）、DeepSeek API Key、智谱 AI API Key。
 
 ```bash
 # 1. 克隆
-git clone <your-repo-url>
-cd notebook-clone
+git clone --branch reconcile-latest https://github.com/WENDAOfan/notebook-clone.git
+cd notebook-clone/notebook-clone
 
 # 2. 建库
 psql -U postgres -c "CREATE DATABASE notebook_clone;"
+psql -U postgres -d notebook_clone -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS hstore;"
 
 # 3. 复制配置模板并填入你的密钥与密码
 cp src/main/resources/application.properties.example src/main/resources/application.properties
@@ -59,7 +60,9 @@ cp src/main/resources/application.properties.example src/main/resources/applicat
 # 浏览器打开 http://localhost:8080
 ```
 
-数据库表由 Hibernate `ddl-auto=update` 自动创建，无需手写 SQL。
+业务表由 Hibernate `ddl-auto=update` 创建；向量表由 `PgVectorStore` 初始化，保存分块正文、JSON 元数据和 2048 维向量。当前使用精确余弦检索，未启用 HNSW/IVFFlat 索引。
+
+扩展安装、旧向量迁移及真实数据库验证命令见 [pgvector 接入说明](docs/pgvector.md)。
 
 ### ⚙️ 配置说明
 
@@ -179,30 +182,31 @@ MIT，详见 [LICENSE](./LICENSE)。
 - Single-doc & notebook-level Q&A with RAG
 - SSE streaming "typewriter" output
 - Citation tracing (`[N]` source markers)
-- Vector retrieval: token chunking (512 + overlap 50) + Zhipu embedding + SimpleVectorStore file persistence
+- Vector retrieval: token chunking + Zhipu embedding + PostgreSQL/pgvector persistence and cosine search
 - Multi-turn dialog with context compression (300K token budget, keep latest 200 messages)
 - Token usage stats
 - Vanilla front-end: draggable 3-column layout, hash routing, markdown rendering
 
 ### 🛠 Tech Stack
 
-Spring Boot 3.4.2 · Java 21 · Spring AI 1.0.0 · PostgreSQL · Spring Data JPA · Spring Security / JWT (jjwt 0.12.3) · DeepSeek (chat) · Zhipu AI (embedding) · Apache PDFBox 3.0.1 · Apache POI 5.2.5 · Spring Retry · vanilla HTML/CSS/JS + marked.js 12.
+Spring Boot 3.4.2 · Java 21 · Spring AI 1.0.0 · PostgreSQL / pgvector · Spring Data JPA · Spring Security / JWT (jjwt 0.12.3) · DeepSeek (chat) · Zhipu AI (embedding) · Apache PDFBox 3.0.1 · Apache POI 5.2.5 · Spring Retry · vanilla HTML/CSS/JS + marked.js 12.
 
 ### 🚀 Quick Start
 
-Prerequisites: JDK 21+, Maven 3.9+, PostgreSQL 14+, DeepSeek & Zhipu API keys.
+Prerequisites: JDK 21+, Maven 3.9+, PostgreSQL 14+ with pgvector installed, DeepSeek & Zhipu API keys.
 
 ```bash
-git clone <your-repo-url>
-cd notebook-clone
+git clone --branch reconcile-latest https://github.com/WENDAOfan/notebook-clone.git
+cd notebook-clone/notebook-clone
 psql -U postgres -c "CREATE DATABASE notebook_clone;"
+psql -U postgres -d notebook_clone -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS hstore;"
 cp src/main/resources/application.properties.example src/main/resources/application.properties
 # edit the file to fill in your keys (or use env vars)
 ./mvnw spring-boot:run      # Windows: mvnw.cmd
 # open http://localhost:8080
 ```
 
-Tables are auto-created by Hibernate `ddl-auto=update`.
+Business tables are created by Hibernate `ddl-auto=update`. `PgVectorStore` initializes the vector table and stores 2048-dimensional embeddings with text and metadata. Retrieval uses exact cosine distance without HNSW/IVFFlat. See [pgvector setup and verification](docs/pgvector.md).
 
 ### ⚙️ Configuration
 
