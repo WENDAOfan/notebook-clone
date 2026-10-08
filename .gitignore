@@ -114,3 +114,6 @@ RAG知识库项目经历_简历优化稿.docx
 /notebook-electron/eval/RESULTS.md
 /notebook-electron/eval/GROUNDING-RESULTS.md
 /notebook-electron/eval/EMBEDDING-RESULTS.md
+
+# MCP local connection descriptor contains an ephemeral bearer token.
+notebook-mcp.json
