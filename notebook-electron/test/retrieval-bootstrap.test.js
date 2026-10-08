@@ -29,6 +29,7 @@ async function bootstrap(settings, ready) {
       getConfig: () => settings },
     './retrieval-runtime-policy': { applicationPolicy },
     './retrieval-service': { configure(options) { calls.push(['retrieval', options.thresholds]); } },
+    './notebook-mcp': { async startNotebookMcp() { return null; } },
     './rag-service': {}, './extractor': {}, './agent-service': {},
     './research-service': {}, './graph-service': {}, './research-providers': {}
   };

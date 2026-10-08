@@ -30,8 +30,10 @@ const agentService = require('./agent-service');
 const researchService = require('./research-service');
 const graphService = require('./graph-service');
 const { validateExternalUrl } = require('./research-providers');
+const { startNotebookMcp } = require('./notebook-mcp');
 
 let mainWindow;
+let notebookMcp;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -79,6 +81,13 @@ app.whenReady().then(async () => {
     await vectorStore.cleanupOrphans(validDocumentIds);
     // Keep old files, but never present corrupt embeddings as a ready index.
     await invalidateCorruptIndexes(vectorStore.store, id => db.markDocumentIndexStale(id));
+    try {
+      notebookMcp = await startNotebookMcp({ db, vectorStore, retrievalService,
+        userDataPath: app.getPath('userData') });
+      if (notebookMcp) console.log('[MCP] 本机检索连接配置:', notebookMcp.descriptorPath);
+    } catch (error) {
+      console.error('[MCP] 检索服务启动失败:', error.message);
+    }
   } catch (e) {
     console.error("初始化本地存储系统失败:", e);
   }
@@ -94,6 +103,10 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', async () => {
   try {
+    if (notebookMcp) {
+      try { await notebookMcp.close(); }
+      catch (error) { console.error('[MCP] 关闭服务失败:', error.message); }
+    }
     ragService.abortActiveAsk();
     for (const requestId of agentService.pendingRuns.keys()) {
       agentService.abort(requestId);

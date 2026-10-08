@@ -31,6 +31,10 @@ npm start
 
 配置模型意味着相应文本会发送至服务商；启用 LlamaParse 时 PDF/DOCX 文件也会上传该解析服务。SQLite 和向量文件本地保存不等于模型完全离线运行。
 
+## 提供 MCP 检索接口（可选）
+
+设置 `NOTEBOOK_MCP_ENABLED=1` 后，桌面通过本机 MCP 提供笔记本列表、统计和带来源的只读检索，供 EchoMind 等客户端复用当前资料。默认关闭；不会复制或重建索引。启动方法、参数、连接文件和测试边界见 [MCP 接入说明](docs/mcp-integration.md)。
+
 ## 文档到回答的流程
 
 1. **解析与索引**：导入 TXT、Markdown、PDF 或 DOCX。PDF/DOCX 在已配置时优先尝试 LlamaParse，失败后尝试本地 LiteParse／Mammoth；解析失败或清洗后为空不作为正文入库。分块后通过智谱生成向量，记录索引状态、内容哈希和模型标识。

@@ -24,6 +24,7 @@
       "!dist/**/*",
       "!config.json",
       "!test/**/*",
+      "!test-support/**/*",
       "!eval/**/*",
       "!docs/**/*"
     ],
@@ -33,6 +34,7 @@
     ]
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@llamaindex/liteparse": "^2.5.1",
     "@openai/agents": "0.13.5",
     "dompurify": "3.4.12",
